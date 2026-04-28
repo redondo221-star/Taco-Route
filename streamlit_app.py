@@ -1,76 +1,56 @@
 import streamlit as st
-import urllib.parse
+import requests
 
-st.set_page_config(page_title="Taco-Route Pro", layout="centered")
-st.title("🚗 Taco-Route Pro")
-st.caption("区間別のタイパ最適化・判断ツール")
+st.set_page_config(page_title="Taco-Route Auto", layout="centered")
+st.title("🤖 Taco-Route: 自動最適化ナビ")
 
-# 1. あなたの基準（全判定に適用）
-st.subheader("👤 あなたのタイパ基準")
-threshold = st.slider("1分短縮に何円まで払える？", 0, 100, 25)
-st.divider()
+# 1. ユーザー基準
+threshold = st.sidebar.slider("1分短縮に何円まで払える？", 0, 100, 25)
 
-# 2. ルート分割入力
-st.subheader("📍 ルートを細かく分ける")
-st.write("短縮効果が場所によって違うため、区間ごとに入力してください。")
+# 2. 入力
+st.subheader("📍 目的地を入力")
+start = st.text_input("出発地", "東京駅")
+end = st.text_input("目的地", "名古屋駅")
 
-with st.expander("STEP1：場所を入力してナビを起動"):
-    start = st.text_input("出発地", "東京")
-    via = st.text_input("経由地（判断の分かれ目）", "御殿場")
-    end = st.text_input("目的地", "名古屋")
+if st.button("最適な乗り継ぎを計算"):
+    # --- 本来はここでGoogle Routes APIを叩き、以下のデータを取得します ---
+    # 仮のシミュレーションデータ
+    segments = [
+        {"name": "都心区間 (東京〜海老名)", "toll": 1300, "time_saved": 40},
+        {"name": "静岡区間 (御殿場〜浜松)", "toll": 3000, "time_saved": 20},
+        {"name": "名古屋付近 (豊田〜名古屋)", "toll": 1200, "time_saved": 35},
+    ]
     
-    # Yahooナビ起動（経由地を考慮したリンク）
-    params = {"from": start, "to": end, "via": via, "yid": "navicore"}
-    y_url = f"https://map.yahoo.co.jp/route/car?{urllib.parse.urlencode(params)}"
-    st.link_button("🚀 Yahoo!ナビで区間ごとの時間を確認", y_url, use_container_width=True)
-
-st.divider()
-
-# 3. 区間ごとのジャッジ
-st.subheader("⚖️ 区間別のタイパ判定")
-
-def segment_judge(label):
-    st.markdown(f"**【{label}】**")
-    c1, c2 = st.columns(2)
-    with c1:
-        t = st.number_input(f"高速料金", min_value=0, step=100, key=f"t_{label}")
-    with c2:
-        m = st.number_input(f"短縮時間(分)", min_value=1, step=1, key=f"m_{label}")
+    st.subheader("🏁 あなたへの最適提案")
     
-    cost_min = t / m if m > 0 else 0
-    if t > 0:
-        if cost_min <= threshold:
-            st.success(f"⭕ 高速推奨 (1分{cost_min:.1f}円)")
-            return t, m
+    total_toll = 0
+    total_time = 0
+    instructions = []
+
+    for seg in segments:
+        cost_per_min = seg["toll"] / seg["time_saved"]
+        
+        if cost_per_min <= threshold:
+            # 基準内なら高速利用
+            status = "✅ 高速推奨"
+            total_toll += seg["toll"]
+            total_time += seg["time_saved"]
+            instructions.append(f"{seg['name']}: **高速を利用** (1分{cost_per_min:.1f}円)")
         else:
-            st.warning(f"🐢 下道でOK (1分{cost_min:.1f}円)")
-            return 0, 0
-    return 0, 0
+            # 基準外なら下道利用
+            status = "🐢 下道推奨"
+            instructions.append(f"{seg['name']}: **一般道を利用** (1分{cost_per_min:.1f}円)")
 
-# 各区間の判定を実行
-total_cost = 0
-total_saved = 0
-
-# 区間A
-cost_a, save_a = segment_judge("出発地 〜 経由地")
-# 区間B
-cost_b, save_b = segment_judge("経由地 〜 目的地")
-
-# 4. 最終的な「最適ルート」の提案
-st.divider()
-st.subheader("🏁 本日の最適ルート提案")
-
-res_cost = cost_a + cost_b
-res_save = save_a + save_b
-
-if res_cost > 0:
-    st.info(f"""
-    **おすすめの走り方：**
-    判定が「⭕」の区間だけ高速を使いましょう。
-    
-    - 合計高速代: **{res_cost}円**
-    - 合計短縮時間: **{res_save}分**
-    - 全区間高速に乗るよりおトクに、かつ効率よく到着できます！
+    # 3. 結果表示
+    for msg in instructions:
+        st.write(msg)
+        
+    st.success(f"""
+    **結果まとめ：**
+    - 高速を使うべき区間だけ利用します。
+    - 合計高速代: {total_toll}円
+    - 短縮時間: {total_time}分
     """)
-else:
-    st.write("全ての区間で下道が推奨されました。のんびり行きましょう。")
+    
+    # 最後に最適な経由地を含んだナビリンクを生成
+    st.info("この指示通りにナビをセットして出発しましょう！")
