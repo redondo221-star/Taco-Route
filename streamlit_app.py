@@ -4,7 +4,7 @@ import urllib.parse
 # --- アプリ設定 ---
 st.set_page_config(page_title="Taco-Route (Yahoo!)", layout="centered")
 st.title("🚗 Taco-Route")
-st.caption("Yahoo!カーナビ連携版")
+st.caption("Yahoo!カーナビ連携版（安定版）")
 
 # 1. あなたの基準設定
 st.subheader("👤 あなたの基準設定")
@@ -21,22 +21,19 @@ with col_start:
 with col_end:
     end_p = st.text_input("目的地", "")
 
-# ※Yahoo!カーナビの仕様上、URL連携では経由地を複数指定するのが難しいため
-# シンプルに出発と到着のみに絞っています。
 if end_p:
-    # Yahoo!カーナビ専用のURLスキームを作成
-    # 出発地が「現在地」の場合は引数を変える
-    s_param = urllib.parse.quote(start_p)
-    d_param = urllib.parse.quote(end_p)
+    # Yahoo!道路経路検索用のURLを作成（これが最も安定しています）
+    # 出発地が現在地の場合は、目的地のみ指定
+    params = {
+        "from": start_p if start_p != "現在地" else "",
+        "to": end_p,
+        "yid": "navicore" # これを入れるとアプリ起動を促してくれます
+    }
     
-    if start_p == "現在地":
-        # 現在地から目的地へ
-        y_navi_url = f"yidm://navi/go?dest={d_param}&lat=&lon="
-    else:
-        # 指定場所から目的地へ
-        y_navi_url = f"yidm://navi/go?start={s_param}&dest={d_param}"
+    # Yahoo!マップのルート検索URL
+    y_map_url = f"https://map.yahoo.co.jp/route/car?{urllib.parse.urlencode(params)}"
 
-    st.link_button("🚀 Yahoo!カーナビを起動", y_navi_url, use_container_width=True)
+    st.link_button("🚀 Yahoo!ナビでルートを表示", y_map_url, use_container_width=True)
 else:
     st.warning("目的地を入力してください")
 
@@ -44,7 +41,7 @@ st.divider()
 
 # 3. タイパ判定
 st.subheader("⚖️ タイパ判定")
-st.write("ナビで出た「料金」と「時間の差」を入れてください。")
+st.write("ナビで出た「料金」と「時間の差」を入力してください。")
 
 col1, col2 = st.columns(2)
 with col1:
