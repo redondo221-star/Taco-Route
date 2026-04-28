@@ -6,12 +6,13 @@ import polyline
 
 API_KEY = "AIzaSyAZFNWvMzl2u__9WSjF77qPhQg_1Gj6Qq8" # ご自身のAPIキー
 
-st.set_page_config(page_title="Taco-Route 修正版", layout="wide")
+st.set_page_config(page_title="Taco-Route 決定版", layout="wide")
 
-st.sidebar.header("⚖️ タイパ設定")
-threshold = st.sidebar.slider("1分短縮に何円まで払える？", 0, 100, 25)
+st.sidebar.header("⚖️ あなたのタイパ設定")
+threshold = st.sidebar.slider("1分短縮にいくらまで払えますか？", 0, 100, 25)
+st.sidebar.info(f"【設定】1分を{threshold}円以下で短縮できるなら高速に乗ります。それ以上なら下道を案内します。")
 
-st.title("🚗 Taco-Route: 中抜き最適化")
+st.title("🚗 Taco-Route: 高速・下道 乗り分けガイド")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -36,58 +37,55 @@ def fetch_route():
     else:
         st.error("ルート取得に失敗しました。")
 
-if st.button("🚀 ルートを検索"):
+if st.button("🚀 最適ルートを算出する"):
     fetch_route()
 
 if st.session_state.route_steps:
     steps = st.session_state.route_steps
     m = folium.Map(location=[35.68, 139.76], zoom_start=8)
     
-    st.subheader("📑 最適化ルート案内")
+    st.subheader("📍 運転指示（ここに従って走行してください）")
     
     total_toll = 0
-    in_highway = False # 現在高速に乗っているかどうかのフラグ
-    current_highway_color = "blue"
-
+    
     for i, step in enumerate(steps):
         instr = step.get('navigationInstruction', {}).get('instructions', "")
         dist_km = step.get('distanceMeters', 0) / 1000
         dur_sec = int(step.get('staticDuration', "0s").replace("s",""))
         
-        # 判定1: 明らかに高速・有料道路に関連する語句か
-        has_highway_keyword = any(kw in instr for kw in ["有料区間", "高速", "料金所", "JCT", "IC", "ランプ", "自動車道"])
-        
-        # 判定2: 接続路（ランプ）かどうか
-        is_connector = any(kw in instr for kw in ["ランプ", "接続", "入口", "出口", "方面に向かって"]) or dist_km < 1.0
+        # 高速・有料道路フラグ
+        is_highway = any(kw in instr for kw in ["有料区間", "高速", "料金所", "JCT", "IC", "ランプ", "自動車道"])
+        # ランプ・接続路フラグ（距離が短い接続路）
+        is_ramp = any(kw in instr for kw in ["ランプ", "接続", "入口", "出口", "方面"]) and dist_km < 3.0
 
-        if has_highway_keyword:
-            if not is_connector:
-                # 本線でのタイパ計算（ここで色を決める）
-                l_time = dist_km * 2.0 
-                h_time = dur_sec / 60
+        if is_highway:
+            # 接続路ではなく本線の場合のみタイパ判定を行う
+            if not is_ramp:
+                l_time = dist_km * 2.0  # 下道の想定
+                h_time = dur_sec / 60   # 高速の想定
                 saved = max(0.1, l_time - h_time)
                 step_toll = int(dist_km * 25 + 150)
-                cpm = step_toll / saved
+                cost_per_min = step_toll / saved
                 
-                if cpm <= threshold:
-                    current_highway_color = "blue"
+                if cost_per_min <= threshold:
+                    color = "blue"
                     total_toll += step_toll
-                    st.info(f"🔵 {instr} 【高速維持: {step_toll}円 / {int(saved)}分短縮】")
+                    st.info(f"✅ 【高速に乗る】 {instr} （{int(saved)}分短縮できるので、乗る価値あり）")
                 else:
-                    current_highway_color = "red"
-                    st.error(f"🔴 {instr} 【★一般道推奨: {int(cpm)}円/分】")
+                    color = "red"
+                    st.error(f"⚠️ 【下道へ降りる】 {instr} （1分短縮に{int(cost_per_min)}円もかかるため、降りた方が得です）")
             else:
-                # 接続路の場合は、今の高速の色（青か赤）をそのまま使う
-                st.write(f"  └ {instr} (高速接続区間)")
+                # 接続路は「高速」扱いとして描画のみ行う（メッセージは補助的に）
+                color = "blue" if 'color' not in locals() or color != "red" else "red"
+                st.write(f"  (走行指示: {instr})")
             
-            color = current_highway_color
             weight = 8
         else:
-            # 一般道
+            # 純粋な一般道
             color = "gray"
             weight = 4
             if dist_km > 0.5:
-                st.write(f"{instr} (一般道)")
+                st.write(f"▶ {instr} (下道を道なりに進む)")
 
         if 'polyline' in step:
             pts = polyline.decode(step['polyline']['encodedPolyline'])
@@ -95,4 +93,4 @@ if st.session_state.route_steps:
             if i == 0: m.location = pts[0]
 
     folium_static(m)
-    st.sidebar.metric("推定合計高速代", f"{total_toll} 円")
+    st.sidebar.metric("現在のルートでの高速料金", f"{total_toll} 円")
