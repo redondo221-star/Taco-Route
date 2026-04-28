@@ -1,57 +1,76 @@
 import streamlit as st
 import urllib.parse
 
-# --- アプリ設定 ---
-st.set_page_config(page_title="Taco-Route (Yahoo!)", layout="centered")
-st.title("🚗 Taco-Route")
-st.caption("Yahoo!カーナビ連携版（安定版）")
+st.set_page_config(page_title="Taco-Route Pro", layout="centered")
+st.title("🚗 Taco-Route Pro")
+st.caption("区間別のタイパ最適化・判断ツール")
 
-# 1. あなたの基準設定
-st.subheader("👤 あなたの基準設定")
-threshold = st.slider("1分短縮に何円まで払えますか？", 0, 100, 25)
-st.caption(f"現在の基準: {threshold}円/分")
-
+# 1. あなたの基準（全判定に適用）
+st.subheader("👤 あなたのタイパ基準")
+threshold = st.slider("1分短縮に何円まで払える？", 0, 100, 25)
 st.divider()
 
-# 2. ルート入力
-st.subheader("📍 行き先を入力")
-col_start, col_end = st.columns(2)
-with col_start:
-    start_p = st.text_input("出発地", "現在地")
-with col_end:
-    end_p = st.text_input("目的地", "")
+# 2. ルート分割入力
+st.subheader("📍 ルートを細かく分ける")
+st.write("短縮効果が場所によって違うため、区間ごとに入力してください。")
 
-if end_p:
-    # Yahoo!道路経路検索用のURLを作成（これが最も安定しています）
-    # 出発地が現在地の場合は、目的地のみ指定
-    params = {
-        "from": start_p if start_p != "現在地" else "",
-        "to": end_p,
-        "yid": "navicore" # これを入れるとアプリ起動を促してくれます
-    }
+with st.expander("STEP1：場所を入力してナビを起動"):
+    start = st.text_input("出発地", "東京")
+    via = st.text_input("経由地（判断の分かれ目）", "御殿場")
+    end = st.text_input("目的地", "名古屋")
     
-    # Yahoo!マップのルート検索URL
-    y_map_url = f"https://map.yahoo.co.jp/route/car?{urllib.parse.urlencode(params)}"
-
-    st.link_button("🚀 Yahoo!ナビでルートを表示", y_map_url, use_container_width=True)
-else:
-    st.warning("目的地を入力してください")
+    # Yahooナビ起動（経由地を考慮したリンク）
+    params = {"from": start, "to": end, "via": via, "yid": "navicore"}
+    y_url = f"https://map.yahoo.co.jp/route/car?{urllib.parse.urlencode(params)}"
+    st.link_button("🚀 Yahoo!ナビで区間ごとの時間を確認", y_url, use_container_width=True)
 
 st.divider()
 
-# 3. タイパ判定
-st.subheader("⚖️ タイパ判定")
-st.write("ナビで出た「料金」と「時間の差」を入力してください。")
+# 3. 区間ごとのジャッジ
+st.subheader("⚖️ 区間別のタイパ判定")
 
-col1, col2 = st.columns(2)
-with col1:
-    toll_input = st.number_input("高速料金 (円)", min_value=0, step=100, value=0)
-with col2:
-    time_saved_input = st.number_input("短縮時間 (分)", min_value=1, step=1, value=1)
+def segment_judge(label):
+    st.markdown(f"**【{label}】**")
+    c1, c2 = st.columns(2)
+    with c1:
+        t = st.number_input(f"高速料金", min_value=0, step=100, key=f"t_{label}")
+    with c2:
+        m = st.number_input(f"短縮時間(分)", min_value=1, step=1, key=f"m_{label}")
+    
+    cost_min = t / m if m > 0 else 0
+    if t > 0:
+        if cost_min <= threshold:
+            st.success(f"⭕ 高速推奨 (1分{cost_min:.1f}円)")
+            return t, m
+        else:
+            st.warning(f"🐢 下道でOK (1分{cost_min:.1f}円)")
+            return 0, 0
+    return 0, 0
 
-if toll_input > 0:
-    cost_per_min = toll_input / time_saved_input
-    if cost_per_min <= threshold:
-        st.success(f"✅ 【高速推奨】1分あたり {cost_per_min:.1f}円")
-    else:
-        st.warning(f"🛑 【下道推奨】1分あたり {cost_per_min:.1f}円")
+# 各区間の判定を実行
+total_cost = 0
+total_saved = 0
+
+# 区間A
+cost_a, save_a = segment_judge("出発地 〜 経由地")
+# 区間B
+cost_b, save_b = segment_judge("経由地 〜 目的地")
+
+# 4. 最終的な「最適ルート」の提案
+st.divider()
+st.subheader("🏁 本日の最適ルート提案")
+
+res_cost = cost_a + cost_b
+res_save = save_a + save_b
+
+if res_cost > 0:
+    st.info(f"""
+    **おすすめの走り方：**
+    判定が「⭕」の区間だけ高速を使いましょう。
+    
+    - 合計高速代: **{res_cost}円**
+    - 合計短縮時間: **{res_save}分**
+    - 全区間高速に乗るよりおトクに、かつ効率よく到着できます！
+    """)
+else:
+    st.write("全ての区間で下道が推奨されました。のんびり行きましょう。")
