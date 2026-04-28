@@ -1,61 +1,90 @@
 import streamlit as st
+import datetime
+import requests
+import google.generativeai as genai
+import folium
+from streamlit_folium import folium_static
 
-st.set_page_config(page_title="AIルート相談プロンプト生成器", layout="centered")
+# --- 設定 ---
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY" # Gemini APIキー
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-pro')
 
-st.title("🤖 AIにルートを相談するための条件設定")
-st.write("ここで条件を入れると、GeminiやCopilotに最適なルートを尋ねるための依頼文が作成されます。")
+st.set_page_config(page_title="AIルートコンシェルジュ", layout="wide")
+st.title("🤖 AIコスパ・タイパ・ナビ")
 
-# 入力項目
-col1, col2 = st.columns(2)
-with col1:
-    origin = st.text_input("出発地", "栃木県宇都宮駅")
-with col2:
-    destination = st.text_input("目的地", "東京都中央区（東京駅付近）")
+# --- 1. 入力エリア ---
+with st.sidebar:
+    st.header("📋 移動条件の設定")
+    origin = st.text_input("出発地点", "宇都宮駅")
+    via_point = st.text_input("経由地（任意）", "五霞IC")
+    destination = st.text_input("目的地", "東京駅")
+    
+    vehicle_type = st.radio("車両区分", ["普通車", "軽自動車"], horizontal=True)
+    
+    departure_type = st.radio("出発時刻", ["今から", "時刻を指定"])
+    if departure_type == "時刻を指定":
+        dept_time = st.time_input("出発希望時刻", datetime.time(8, 0))
+    else:
+        dept_time = datetime.datetime.now().time()
 
-st.divider()
+    st.subheader("⚙️ 割引・タイパ条件")
+    st.write("適用する割引")
+    night_discount = st.checkbox("深夜割引 (0-4時・30%OFF)", value=True)
+    holiday_discount = st.checkbox("休日割引 (土日祝・30%OFF)", value=True)
+    
+    threshold = st.slider("1分短縮にいくら払える？", 0, 100, 30)
 
-# こだわり条件
-st.subheader("⚙️ こだわり条件")
-threshold = st.select_slider(
-    "1分短縮にいくらまで払える？（タイパ設定）",
-    options=[10, 20, 30, 50, 100, 200],
-    value=30
-)
-
-option_route4 = st.checkbox("新4号バイパス（宇都宮〜五霞）の活用を検討に含める", value=True)
-option_etc = st.checkbox("ETC深夜割引（0-4時）を考慮する", value=False)
-
-if st.button("✨ AIへの質問文を生成する"):
-    # プロンプトの組み立て
+# --- 2. AIへの問い合わせロジック ---
+if st.button("🚀 AIに最適ルートを相談する"):
+    # AIへのプロンプト作成
     prompt = f"""
-あなたは日本の道路事情に精通したベテランドライバーです。
-以下の条件で、最も「コスパとタイパのバランスが良い」車ルートを教えてください。
+あなたは日本の交通事情と高速料金体系に精通したエキスパートです。
+以下の条件で、最もコスパとタイパのバランスが良いルートを提案してください。
 
-# 移動区間
-出発地：{origin}
-目的地：{destination}
+【移動条件】
+・区間：{origin} から {destination} まで（経由地：{via_point}）
+・車両：{vehicle_type}
+・出発：{dept_time}
+・時間価値：1分短縮に{threshold}円まで（これを超えるなら下道優先）
+・割引条件：深夜割引={night_discount}、休日割引={holiday_discount}
 
-# 判断基準
-・私は「1分短縮できるなら{threshold}円まで」なら高速代を払います。
-・それ以上のコストがかかる場合は、積極的に下道（バイパス等）を使いたいと考えています。
-"""
-    
-    if option_route4:
-        prompt += "\n# 特別な指示\n・宇都宮〜五霞間は『新4号バイパス』が非常に流れが良く、高速と遜色ないスピードで走れる場合があります。この区間の東北道利用が本当に見合うか厳しく判定してください。\n"
-    
-    if option_etc:
-        prompt += "・ETC深夜割引（30%OFF）が適用される前提で計算してください。\n"
+【特記事項】
+・宇都宮〜五霞間は新4号バイパスの利用も検討してください。
+・首都高の料金体系（上限・下限）やETC割引を考慮してください。
 
-    prompt += """
-# 回答してほしい内容
-1. 最終的な推奨ルート（どのICで乗り、どのICで降りるか）
-2. 想定される高速料金の合計
-3. そのルートを選んだ理由（下道と比べて何分早くなり、いくら高くなるか）
-4. 通過する主要な国道やバイパス名
-
-親切で具体的なアドバイスをお願いします。
+【回答形式】
+以下の3点を必ず含めてください。
+1. 推奨ルートの概要（どのICで乗り、どこで降りるか）
+2. 予測される合計料金と短縮時間
+3. そのルートを選定した詳細な理由（コスパ判定結果）
+4. 地図描画用の主要地点の座標（または地名）
 """
 
-    st.subheader("📋 下の文章をコピーしてAI（Gemini/Copilot）に貼り付けてください")
-    st.code(prompt, language="markdown")
-    st.success("このプロンプトをAIに渡せば、複雑な料金や地元の道路事情を加味した納得の回答が得られます！")
+    with st.spinner("Geminiが最適なルートを計算中..."):
+        response = model.generate_content(prompt)
+        ai_result = response.text
+
+    # --- 3. 結果の表示 ---
+    st.divider()
+    
+    # 地図表示（ここではイメージとして簡易表示）
+    st.subheader("🗺️ 推奨ルート・マップ")
+    m = folium.Map(location=[36.0, 139.8], zoom_start=9)
+    # ※本来はAIが返した座標をパースして描画
+    # 例：高速＝赤、下道＝青で描画するロジック
+    folium.Marker([36.55, 139.90], popup="出発: 宇都宮").add_to(m)
+    folium.Marker([35.68, 139.76], popup="到着: 東京").add_to(m)
+    folium_static(m)
+
+    # 理由の要約
+    st.success(f"💡 AIの選定理由：{ai_result.split('理由')[1][:150]}...")
+
+    # 詳細ボタン
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("📝 ルートの詳細を見る"):
+            st.write(ai_result)
+    with col_b:
+        if st.button("🧐 なぜこのルート？（詳細理由）"):
+            st.info(ai_result.split('理由')[1] if '理由' in ai_result else ai_result)
