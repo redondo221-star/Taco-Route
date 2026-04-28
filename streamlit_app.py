@@ -8,10 +8,8 @@ import polyline
 API_KEY = "AIzaSyAZFNWvMzl2u__9WSjF77qPhQg_1Gj6Qq8" 
 
 st.set_page_config(page_title="Taco-Route Pro", layout="wide")
-st.title("🚗 Taco-Route: 地図 & 詳細ガイド")
+st.title("🚗 Taco-Route: 最適ルート案内")
 
-# サイドバー設定
-st.sidebar.header("⚖️ タイパ設定")
 threshold = st.sidebar.slider("1分短縮に何円まで払える？", 10, 100, 25)
 
 col_in1, col_in2 = st.columns(2)
@@ -25,7 +23,6 @@ def get_route_data(avoid_highways):
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": API_KEY,
-        # 「道順の指示（navigationInstruction）」をフィールドマスクに追加！
         "X-Goog-Fieldmask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.steps.navigationInstruction"
     }
     payload = {
@@ -37,26 +34,16 @@ def get_route_data(avoid_highways):
     }
     return requests.post(url, json=payload, headers=headers).json()
 
-if st.button("🚀 ルートを解析する"):
-    with st.spinner("データを取得中..."):
-        h_res = get_route_data(False) # 高速あり
-        l_res = get_route_data(True)  # 下道のみ
+if st.button("🚀 ルートを判定する"):
+    with st.spinner("計算中..."):
+        h_res = get_route_data(False) # 高速ルート
+        l_res = get_route_data(True)  # 下道ルート
 
         if 'routes' in h_res and 'routes' in l_res:
             h_route = h_res['routes'][0]
             l_route = l_res['routes'][0]
 
-            # --- 1. 地図の表示 ---
-            h_points = polyline.decode(h_route['polyline']['encodedPolyline'])
-            m = folium.Map(location=h_points[0], zoom_start=10)
-            folium.PolyLine(h_points, color="blue", weight=5, tooltip="高速ルート").add_to(m)
-            l_points = polyline.decode(l_route['polyline']['encodedPolyline'])
-            folium.PolyLine(l_points, color="red", weight=3, opacity=0.6, tooltip="下道ルート").add_to(m)
-            
-            st.subheader("🗺️ 走行ルート比較")
-            folium_static(m)
-
-            # --- 2. 判定結果の表示 ---
+            # 判定ロジック
             h_min = int(h_route['duration'][:-1]) / 60
             l_min = int(l_route['duration'][:-1]) / 60
             saved_min = l_min - h_min
@@ -64,24 +51,33 @@ if st.button("🚀 ルートを解析する"):
             toll = int(dist_km * 25 + 150) if saved_min > 5 else 0
             cost_per_min = toll / saved_min if saved_min > 0 else 0
 
-            st.divider()
-            if cost_per_min <= threshold:
-                st.success(f"🏆 高速利用がおすすめ！ (短縮時間: {int(saved_min)}分)")
-            else:
-                st.warning(f"🐢 一般道がおすすめ！ (節約できる料金: {toll}円)")
+            # 地図表示
+            h_points = polyline.decode(h_route['polyline']['encodedPolyline'])
+            m = folium.Map(location=h_points[0], zoom_start=10)
+            folium.PolyLine(h_points, color="blue", weight=5, tooltip="高速").add_to(m)
+            l_points = polyline.decode(l_route['polyline']['encodedPolyline'])
+            folium.PolyLine(l_points, color="red", weight=3, opacity=0.6, tooltip="下道").add_to(m)
+            st.subheader("🗺️ ルート比較（青：高速 / 赤：下道）")
+            folium_static(m)
 
-            # --- 3. 【ここが重要】ルート詳細のテキスト表示 ---
-            st.subheader("📑 具体的な道順（高速優先ルート）")
-            
-            # Google APIから返ってきたステップを一つずつ表示
-            steps = h_route['legs'][0].get('steps', [])
+            st.divider()
+
+            # --- 判定によって「表示するルートデータ」を入れ替える ---
+            if cost_per_min <= threshold and saved_min > 0:
+                st.success(f"🏆 【高速道路】がおすすめ！ (1分短縮コスト: {cost_per_min:.1f}円)")
+                best_route = h_route  # 高速のデータを詳細に使う
+                route_type = "高速優先"
+            else:
+                st.warning(f"🐢 【一般道】がおすすめ！ (節約できる料金: {toll}円)")
+                best_route = l_route  # 下道のデータを詳細に使う
+                route_type = "一般道"
+
+            # 選択された「おすすめルート」の道順を表示
+            st.subheader(f"📑 {route_type}ルートの詳細な道順")
+            steps = best_route['legs'][0].get('steps', [])
             for i, step in enumerate(steps):
                 if 'navigationInstruction' in step:
                     instruction = step['navigationInstruction']['instructions']
-                    # 有料道路に入るタイミングを強調
-                    if "有料道路" in instruction or "高速" in instruction:
-                        st.markdown(f"**{i+1}. ⚠️ {instruction}**")
-                    else:
-                        st.write(f"{i+1}. {instruction}")
+                    st.write(f"{i+1}. {instruction}")
         else:
-            st.error("詳細ルートの取得に失敗しました。住所を確認してください。")
+            st.error("データの取得に失敗しました。")
