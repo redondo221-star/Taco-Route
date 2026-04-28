@@ -6,11 +6,11 @@ import polyline
 
 API_KEY = "AIzaSyAZFNWvMzl2u__9WSjF77qPhQg_1Gj6Qq8"
 
-st.set_page_config(page_title="Taco-Route 最適化版", layout="wide")
-st.title("🚗 Taco-Route: 中抜きポイント自動発見")
+st.set_page_config(page_title="Taco-Route 決定版", layout="wide")
+st.title("🚗 Taco-Route: あなた専用の最適ルート案内")
 
-st.sidebar.header("⚖️ タイパ設定")
-threshold = st.sidebar.slider("1分短縮に何円まで払える？", 0, 100, 30)
+# サイドバー設定
+threshold = st.sidebar.slider("1分短縮にいくら払える？", 0, 100, 30)
 
 col1, col2 = st.columns(2)
 with col1:
@@ -20,11 +20,8 @@ with col2:
 
 def fetch_route():
     url = "https://routes.googleapis.com/directions/v2:computeRoutes"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": API_KEY,
-        "X-Goog-Fieldmask": "routes.legs.steps,routes.polyline"
-    }
+    headers = {"Content-Type": "application/json", "X-Goog-Api-Key": API_KEY,
+               "X-Goog-Fieldmask": "routes.legs.steps,routes.polyline"}
     payload = {
         "origin": {"address": origin}, "destination": {"address": destination},
         "travelMode": "DRIVE", "routingPreference": "TRAFFIC_AWARE",
@@ -32,48 +29,71 @@ def fetch_route():
     }
     return requests.post(url, json=payload, headers=headers).json()
 
-if st.button("🚀 最適ポイントを見つける"):
+if st.button("🚀 最適な道を教える"):
     res = fetch_route()
     if 'routes' in res:
         steps = res['routes'][0]['legs'][0]['steps']
         m = folium.Map(location=[36.2, 139.8], zoom_start=9)
         total_toll = 0
         
-        st.subheader("📍 判定結果")
+        st.subheader("📝 本日の走行ルート案内")
+        st.write("※コスパを考慮し、最適な区間のみ高速を利用するルートです。")
+
+        # 連続する有料区間をまとめて判定するためのバッファ
+        h_buffer = []
+        h_dist, h_time = 0, 0
+
+        def process_highway_block(buffer, dist, time):
+            """溜まった高速区間を一括で評価し、使うべきなら案内を出す"""
+            if not buffer: return 0
+            # 短縮時間の計算（新4号基準: 1km=1分）
+            saved = max(0.1, dist - time)
+            toll = int(dist * 25 + 250) # 入場料＋距離
+            cpm = toll / saved
+            
+            if cpm <= threshold:
+                # 【採用】高速として案内
+                st.info(f"🔵 【高速利用】 {buffer[0].get('navigationInstruction',{}).get('instructions','高速')} から入る")
+                st.write(f"  (約{dist:.1f}km走行 / 料金:{toll}円 / {int(saved)}分短縮)")
+                for s in buffer:
+                    pts = polyline.decode(s['polyline']['encodedPolyline'])
+                    folium.PolyLine(pts, color="blue", weight=8).add_to(m)
+                return toll
+            else:
+                # 【不採用】一般道として描画
+                st.write(f"▶️ 【下道（新4号等）推奨】 高速は使わず道なりに進む (約{dist:.1f}km)")
+                for s in buffer:
+                    pts = polyline.decode(s['polyline']['encodedPolyline'])
+                    folium.PolyLine(pts, color="gray", weight=4).add_to(m)
+                return 0
 
         for step in steps:
-            instr = step.get('navigationInstruction', {}).get('instructions', "道なり")
+            instr = step.get('navigationInstruction', {}).get('instructions', "")
             dist_km = step.get('distanceMeters', 0) / 1000
             dur_min = int(step.get('staticDuration', "0s").replace("s","")) / 60
-            
-            # 有料・高速の判定
-            is_highway = any(kw in instr for kw in ["有料", "高速", "首都高", "自動車道", "IC", "JCT"])
-            
-            if is_highway and dist_km > 0:
-                # 【重要】ここがシミュレーションロジック
-                # 新4号のような快走路（1kmあたり1分）を基準にする
-                local_time_est = dist_km * 1.0 
-                saved_time = max(0.1, local_time_est - dur_min)
-                toll = int(dist_km * 25 + 150)
-                cpm = toll / saved_time
-                
-                # コスパが良い（青）か、悪い（赤）かを1区間ずつ判定
-                if cpm <= threshold:
-                    color = "blue"
-                    total_toll += toll
-                    st.info(f"🔵 【高速推奨】 {instr} (短縮効果大: {int(cpm)}円/分)")
-                else:
-                    color = "red"
-                    st.error(f"🔴 【下道（新4号）推奨】 {instr} (コスパ悪: {int(cpm)}円/分)")
-                weight = 8
-            else:
-                color = "gray"
-                weight = 4
-                if dist_km > 0.5: st.write(f"▶ {instr}")
+            is_paid = any(kw in instr for kw in ["有料", "高速", "首都高", "IC", "JCT", "入口"])
 
-            if 'polyline' in step:
-                pts = polyline.decode(step['polyline']['encodedPolyline'])
-                folium.PolyLine(pts, color=color, weight=weight).add_to(m)
+            if is_paid:
+                h_buffer.append(step)
+                h_dist += dist_km
+                h_time += dur_min
+            else:
+                # 一般道に切り替わった時に、直前の高速区間をまとめて判定
+                if h_buffer:
+                    total_toll += process_highway_block(h_buffer, h_dist, h_time)
+                    h_buffer, h_dist, h_time = [], 0, 0
+                
+                # 一般道の案内（重要なもののみ）
+                if dist_km > 1.0:
+                    st.write(f"▶️ {instr}")
+                
+                if 'polyline' in step:
+                    pts = polyline.decode(step['polyline']['encodedPolyline'])
+                    folium.PolyLine(pts, color="gray", weight=4).add_to(m)
+
+        # 最後に残ったバッファを処理
+        if h_buffer:
+            total_toll += process_highway_block(h_buffer, h_dist, h_time)
 
         folium_static(m)
-        st.sidebar.metric("この設定での合計料金", f"{total_toll} 円")
+        st.sidebar.metric("今回の合計高速料金", f"{total_toll} 円")
