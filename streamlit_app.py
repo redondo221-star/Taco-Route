@@ -1,12 +1,15 @@
 import streamlit as st
 import urllib.parse
 
-st.set_page_config(page_title="Taco-Route", layout="centered")
+# --- アプリ設定 ---
+st.set_page_config(page_title="Taco-Route (Yahoo!)", layout="centered")
 st.title("🚗 Taco-Route")
+st.caption("Yahoo!カーナビ連携版")
 
-# 1. あなたの基準
+# 1. あなたの基準設定
 st.subheader("👤 あなたの基準設定")
 threshold = st.slider("1分短縮に何円まで払えますか？", 0, 100, 25)
+st.caption(f"現在の基準: {threshold}円/分")
 
 st.divider()
 
@@ -18,36 +21,31 @@ with col_start:
 with col_end:
     end_p = st.text_input("目的地", "")
 
-with st.expander("＋ 経由地を追加"):
-    w1 = st.text_input("経由地1", "")
-    w2 = st.text_input("経由地2", "")
-
-# 3. Googleマップ起動（最も標準的な検索URL）
+# ※Yahoo!カーナビの仕様上、URL連携では経由地を複数指定するのが難しいため
+# シンプルに出発と到着のみに絞っています。
 if end_p:
-    # 経由地をカンマで結合
-    way_list = [w for w in [w1, w2] if w]
-    waypoints = ",".join(way_list)
+    # Yahoo!カーナビ専用のURLスキームを作成
+    # 出発地が「現在地」の場合は引数を変える
+    s_param = urllib.parse.quote(start_p)
+    d_param = urllib.parse.quote(end_p)
     
-    # パソコン版でもスマホ版でも「検索」として正しく認識される標準URL
-    params = {
-        "api": "1",
-        "origin": start_p,
-        "destination": end_p,
-        "travelmode": "driving"
-    }
-    if waypoints:
-        params["waypoints"] = waypoints
+    if start_p == "現在地":
+        # 現在地から目的地へ
+        y_navi_url = f"yidm://navi/go?dest={d_param}&lat=&lon="
+    else:
+        # 指定場所から目的地へ
+        y_navi_url = f"yidm://navi/go?start={s_param}&dest={d_param}"
 
-    gmaps_url = f"https://www.google.com/maps/dir/?{urllib.parse.urlencode(params)}"
-
-    st.link_button("🚀 Googleマップを起動", gmaps_url, use_container_width=True)
+    st.link_button("🚀 Yahoo!カーナビを起動", y_navi_url, use_container_width=True)
 else:
     st.warning("目的地を入力してください")
 
 st.divider()
 
-# 4. タイパ判定
+# 3. タイパ判定
 st.subheader("⚖️ タイパ判定")
+st.write("ナビで出た「料金」と「時間の差」を入れてください。")
+
 col1, col2 = st.columns(2)
 with col1:
     toll_input = st.number_input("高速料金 (円)", min_value=0, step=100, value=0)
