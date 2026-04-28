@@ -3,7 +3,7 @@ import requests
 import json
 
 # --- ここにご自身のAPIキーを貼り付け ---
-API_KEY = "AIzaSy..." 
+API_KEY = "AIzaSyAZFNWvMzl2u__9WSjF77qPhQg_1Gj6Qq8" 
 
 st.title("🚗 Taco-Route 接続テスト版")
 
