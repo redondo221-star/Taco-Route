@@ -1,31 +1,30 @@
 import streamlit as st
 import requests
+import folium
+from streamlit_folium import folium_static
+import polyline # ルート描画用
 
 # --- あなたのAPIキー ---
 API_KEY = "AIzaSyAZFNWvMzl2u__9WSjF77qPhQg_1Gj6Qq8" 
 
-st.set_page_config(page_title="Taco-Route: タイパ最適化", layout="wide")
-st.title("🚗 Taco-Route: 自動ルート判定")
+st.set_page_config(page_title="Taco-Route Map", layout="wide")
+st.title("🚗 Taco-Route: 地図表示 & 自動判定")
 
-# 1. あなたのタイパ基準（サイドバー）
-st.sidebar.header("⚖️ タイパの基準")
+# サイドバー設定
 threshold = st.sidebar.slider("1分短縮に何円まで払える？", 10, 100, 25)
-st.sidebar.caption(f"現在の設定: {threshold}円/分")
-st.sidebar.info("例: 25円なら、1時間短縮に1,500円まで払うという意味です。")
 
-# 2. 目的地入力
 col_in1, col_in2 = st.columns(2)
 with col_in1:
     origin = st.text_input("出発地", "東京駅")
 with col_in2:
     destination = st.text_input("目的地", "御殿場駅")
 
-def call_routes_api(avoid_highways):
+def get_route_data(avoid_highways):
     url = "https://routes.googleapis.com/directions/v2:computeRoutes"
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": API_KEY,
-        "X-Goog-Fieldmask": "routes.duration,routes.distanceMeters,routes.legs.steps.navigationInstruction"
+        "X-Goog-Fieldmask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"
     }
     payload = {
         "origin": {"address": origin},
@@ -36,53 +35,49 @@ def call_routes_api(avoid_highways):
     }
     return requests.post(url, json=payload, headers=headers).json()
 
-if st.button("🚀 どっちがお得か判定する"):
-    with st.spinner("ルートと料金を計算中..."):
-        # 高速あり・なしを両方計算
-        high_res = call_routes_api(False)
-        low_res = call_routes_api(True)
+if st.button("🚀 ルートを比較して地図に表示"):
+    with st.spinner("ルートを計算中..."):
+        h_res = get_route_data(False) # 高速
+        l_res = get_route_data(True)  # 下道
 
-        if 'routes' in high_res and 'routes' in low_res:
-            h_route = high_res['routes'][0]
-            l_route = low_res['routes'][0]
+        if 'routes' in h_res and 'routes' in l_res:
+            h_route = h_res['routes'][0]
+            l_route = l_res['routes'][0]
 
-            # 時間(分)と距離(km)
+            # 各種計算
             h_min = int(h_route['duration'][:-1]) / 60
             l_min = int(l_route['duration'][:-1]) / 60
-            dist_km = h_route['distanceMeters'] / 1000
-
-            # 短縮時間
             saved_min = l_min - h_min
-            
-            # 💡 簡易料金計算ロジック（日本の高速料金目安: 約25円/km + 入場料等）
-            # 本来は詳細APIが必要ですが、まずはこれでシミュレーション！
-            estimated_toll = int(dist_km * 25 + 150) if saved_min > 5 else 0
-            
-            # タイパコスト計算
-            cost_per_min = estimated_toll / saved_min if saved_min > 0 else 0
+            dist_km = h_route['distanceMeters'] / 1000
+            toll = int(dist_km * 25 + 150) if saved_min > 5 else 0
+            cost_per_min = toll / saved_min if saved_min > 0 else 0
 
-            # 🏁 判定
+            # --- 地図の作成 ---
+            # ルートの中間地点を地図の中心にする
+            m = folium.Map(location=[35.6812, 139.7671], zoom_start=10) # 初期値は東京
+
+            # 高速ルート（青い線）を描画
+            h_points = polyline.decode(h_route['polyline']['encodedPolyline'])
+            folium.PolyLine(h_points, color="blue", weight=5, opacity=0.7, tooltip="高速ルート").add_to(m)
+
+            # 下道ルート（赤い線）を描画
+            l_points = polyline.decode(l_route['polyline']['encodedPolyline'])
+            folium.PolyLine(l_points, color="red", weight=3, opacity=0.6, tooltip="下道ルート").add_to(m)
+
+            # 地図を画面に表示
+            st.subheader("🗺️ ルートマップ（青：高速 / 赤：下道）")
+            folium_static(m)
+
+            # --- 判定結果の表示 ---
             st.divider()
-            if cost_per_min <= threshold and saved_min > 0:
-                st.balloons()
-                st.success(f"🏆 【高速道路】の利用を推奨します！")
-                result_text = f"1分短縮のコストが **{cost_per_min:.1f}円** なので、あなたの基準（{threshold}円）よりお得です。"
+            if cost_per_min <= threshold:
+                st.success(f"🏆 高速推奨！ (1分短縮コスト: {cost_per_min:.1f}円)")
             else:
-                st.warning(f"🐢 【一般道】で行くのが賢い選択です！")
-                result_text = f"高速を使っても1分短縮に **{cost_per_min:.1f}円** かかります。あなたの基準では「高い」と判断しました。"
+                st.warning(f"🐢 下道推奨！ (1分短縮コスト: {cost_per_min:.1f}円)")
 
-            # 結果の表示
-            st.write(result_text)
-            
             c1, c2, c3 = st.columns(3)
-            c1.metric("短縮される時間", f"{int(saved_min)} 分")
-            c2.metric("予想高速代", f"{estimated_toll} 円")
-            c3.metric("タイパ・コスト", f"{cost_per_min:.1f} 円/分")
-
-            # 詳細な道順（高速あり）
-            with st.expander("👀 具体的な道順を見る"):
-                for i, step in enumerate(h_route['legs'][0]['steps']):
-                    if 'navigationInstruction' in step:
-                        st.write(f"{i+1}. {step['navigationInstruction']['instructions']}")
+            c1.metric("短縮時間", f"{int(saved_min)} 分")
+            c2.metric("概算料金", f"{toll} 円")
+            c3.metric("タイパ", f"{cost_per_min:.1f} 円/分")
         else:
-            st.error("APIの取得に失敗しました。住所を確認してください。")
+            st.error("データの取得に失敗しました。")
