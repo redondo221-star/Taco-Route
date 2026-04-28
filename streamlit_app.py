@@ -6,7 +6,7 @@ from streamlit_folium import folium_static
 
 # --- 設定 ---
 # ※ここにあなたのGemini APIキーを入力してください
-API_KEY = "YOUR_GEMINI_API_KEY"
+API_KEY = "AIzaSyAZFNWvMzl2u__9WSjF77qPhQg_1Gj6Qq8"
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-pro')
 
