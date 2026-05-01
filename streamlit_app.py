@@ -1,92 +1,96 @@
 import streamlit as st
-import datetime
 import google.generativeai as genai
-import folium
-from streamlit_folium import folium_static
+from datetime import datetime
 
-# --- 設定 ---
-# ※ここにあなたのGemini APIキーを入力してください
-API_KEY = "AIzaSyAZFNWvMzl2u__9WSjF77qPhQg_1Gj6Qq8"
-genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+# --- 【重要】APIキーの読み込み設定 ---
+# Streamlit Cloudの「Secrets」に保存したキーを優先的に読み込みます
+if "API_KEY" in st.secrets:
+    API_KEY = st.secrets["API_KEY"]
+else:
+    # ローカルPCでテストする時だけ、ここに新しいキーを貼ってください。
+    # GitHubにアップロードする際は、ここは空欄 "" にして保存するのが安全です。
+    API_KEY = "" 
 
-st.set_page_config(page_title="AIコスパ・タイパ・ナビ", layout="wide")
-st.title("🚗 AIルートコンシェルジュ")
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+else:
+    st.error("APIキーが設定されていません。Streamlit CloudのSecretsまたはコード内に設定してください。")
 
-# --- 1. 条件入力 ---
-with st.sidebar:
-    st.header("📋 条件設定")
-    origin = st.text_input("出発地点", "宇都宮駅")
-    via_point = st.text_input("経由地", "五霞IC")
-    destination = st.text_input("目的地", "東京駅")
+# アプリの基本設定
+st.set_page_config(page_title="Taco-Route: コスパ・タイパ・ナビ", layout="centered")
+
+st.title("🚗 Taco-Route (コスパ・タイパ・ナビ)")
+st.write("名阪国道や新4号などの「無料高規格道路」を活用した最強ルートを提案します。")
+
+# --- 入力エリア ---
+with st.container():
+    st.subheader("📍 ルート情報")
+    col_start, col_end = st.columns(2)
+    with col_start:
+        start_point = st.text_input("出発地点", value="西東京市北町")
+    with col_end:
+        destination = st.text_input("目的地", value="ルートイン和泉岸和田")
     
-    vehicle = st.radio("車両区分", ["普通車", "軽自動車"], horizontal=True)
-    
-    dept_type = st.radio("出発時刻", ["今から", "時刻を指定"])
-    dept_time = st.time_input("出発時間", datetime.time(8, 0)) if dept_type == "時刻を指定" else "現在"
-    
-    st.subheader("⚙️ 割引・タイパ設定")
-    night_disc = st.checkbox("深夜割引(0-4時)を考慮", value=True)
-    holiday_disc = st.checkbox("休日割引(土日祝)を考慮", value=True)
-    
-    threshold = st.slider("1分短縮にいくら払える？", 0, 100, 30)
+    col_date, col_time = st.columns(2)
+    with col_date:
+        departure_date = st.date_input("出発日", value=datetime.now())
+    with col_time:
+        if "selected_time" not in st.session_state:
+            st.session_state.selected_time = datetime.now().time()
+        departure_time = st.time_input("出発時刻", value=st.session_state.selected_time)
+        st.session_state.selected_time = departure_time
 
-# --- 2. AIへのリクエスト ---
-if st.button("🚀 最適ルートをAIに尋ねる"):
-    prompt = f"""
-あなたは日本の道路交通と高速料金（ETC割引含む）の専門家です。
-以下の条件で、最もコスパの良いルートを1つ提案してください。
+with st.expander("⚙️ 詳細設定（コスト計算用）", expanded=True):
+    col1, col2 = st.columns(2)
+    with col1:
+        time_value = st.number_input("時間価値(円/h)", min_value=0, value=1500, step=100)
+    with col2:
+        car_type = st.selectbox("車種", ["普通車", "軽自動車"])
 
-【条件】
-出発：{origin} / 経由：{via_point} / 到着：{destination}
-車両：{vehicle} / 出発時刻：{dept_time}
-時間価値：1分短縮につき{threshold}円まで（これを超える高速利用はNG）
-割引：深夜割引={night_disc}, 休日割引={holiday_disc}
-
-【重要】
-宇都宮〜五霞間は「新4号バイパス」の利用を強く検討してください。
-その上で、どこから高速に乗り、どこで降りるのがベストか判断してください。
-
-【回答形式】
-1.【推奨ルート】IC名や道路名を具体的に
-2.【料金と時間】想定料金(円)と、下道のみの場合との短縮時間(分)
-3.【選定理由】なぜそのルートがベストか（コスパ計算の結果）
-4.【地図用】高速区間の開始点と終了点の地名
-"""
-
-    with st.spinner("AIが最適な組み合わせを計算しています..."):
+# --- AI実行ボタン ---
+if st.button("AIにルート提案を依頼する"):
+    if not API_KEY:
+        st.warning("APIキーを設定してください。")
+    elif start_point and destination:
         try:
-            response = model.generate_content(prompt)
-            answer = response.text
+            # 404エラー対策：利用可能なモデルを自動取得
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            target_model = next((m for m in available_models if 'gemini-1.5-flash' in m), available_models[0])
+            model = genai.GenerativeModel(target_model)
+            
+            # AIへの詳細指示（プロンプト）
+            prompt = f"""
+            {start_point}から{destination}へのルートを提案してください。
+            
+            【あなたの役割】
+            日本の道路事情に精通したベテラン運転手として、以下の3案を出してください。
+            特に「無料で高速道路並みに走れる高規格バイパス（名阪国道、新4号、国道23号など）」を積極的に組み込んだ案を重視してください。
 
-            # --- 3. 結果表示 ---
-            st.divider()
-            
-            # 地図の描画（AIの回答に基づいて色分けを模倣）
-            st.subheader("🗺️ 提案ルートマップ")
-            m = folium.Map(location=[36.0, 139.8], zoom_start=9)
-            
-            # 本来はAPIでルート座標を取るが、ここでは概念的に表示
-            # 高速＝赤、一般道＝青
-            st.write("🔴 赤：高速利用区間 / 🔵 青：一般道（新4号など）")
-            folium.Marker([36.5, 139.9], tooltip="出発", icon=folium.Icon(color='blue')).add_to(m)
-            folium.Marker([35.6, 139.7], tooltip="到着", icon=folium.Icon(color='red')).add_to(m)
-            folium_static(m)
+            【提案内容】
+            1. タイパ案：全行程で有料高速を優先。
+            2. コスパ案：全行程で一般道を利用。
+            3. ハイブリッド案：高速代を節約しつつ時間を稼げる「無料バイパス」を最大限に活用。
+               （例：亀山IC〜天理ICは名阪国道を使うなど）
 
-            # 選定理由（要約）
-            st.success("✅ 最適なルートが見つかりました")
+            【表示ルール】
+            ・有料高速の区間は「【高速:区間名】」
+            ・一般道や無料バイパスの区間は「【一般:区間名】」
             
-            # 詳細表示（ボタンで出し分け）
-            tab1, tab2 = st.tabs(["📋 詳細ルート案内", "🧐 なぜこのルート？"])
+            最後に比較表を出してください（時間、距離、高速代、時間価値{time_value}円/hを含めた総コスト）。
+            """
             
-            with tab1:
-                st.write(answer.split("3.")[0]) # 理由以外を表示
+            with st.spinner("AIが最適なルートを計算中..."):
+                response = model.generate_content(prompt)
+                full_text = response.text
                 
-            with tab2:
-                if "3." in answer:
-                    st.info(answer.split("3.")[1]) # 理由部分を表示
-                else:
-                    st.write(answer)
-                    
+                # 文字列をStreamlitの色付き表示（赤：高速、青：一般）に変換
+                colored_text = full_text.replace("【高速", ":red[**【高速").replace("【一般", ":blue[**【一般").replace("】", "】**]")
+                
+                st.markdown("---")
+                st.write(f"### 🤖 AIの提案（🔴赤＝有料 / 🔵青＝無料・一般）")
+                st.markdown(colored_text)
+
         except Exception as e:
             st.error(f"エラーが発生しました: {e}")
+    else:
+        st.warning("出発地と目的地を入力してください。")
