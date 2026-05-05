@@ -3,7 +3,7 @@ import google.generativeai as genai
 from datetime import datetime
 from streamlit_js_eval import get_geolocation
 
-# 1. AIの設定
+# 1. APIキーの設定
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 else:
@@ -47,21 +47,23 @@ if st.button("ルートを提案してもらう"):
     
     prompt = f"{start_point}から{destination}へのルート{via_info}を、出発日時{dt_str}で提案して。タイパ・コスパ・名阪国道活用の3案と比較表を出して。"
 
-    try:
-        # 💡 対策：モデル名の指定を「models/gemini-1.5-flash」とフルネームにする
-        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
+    # 💡 404を回避するために「古い名前」から「最新」まで順に試す仕組み
+    success = False
+    models_to_try = ['gemini-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']
+    
+    with st.spinner("AIが計算中..."):
+        for m_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(m_name)
+                response = model.generate_content(prompt)
+                st.markdown("---")
+                st.write(f"### 🕒 {dt_str} 出発の提案 ({m_name}を使用)")
+                st.markdown(response.text)
+                success = True
+                break # 成功したらループを抜ける
+            except:
+                continue # 失敗したら次のモデルを試す
         
-        with st.spinner("AIが計算中..."):
-            response = model.generate_content(prompt)
-            st.markdown("---")
-            st.write(f"### 🕒 {dt_str} 出発の提案")
-            st.markdown(response.text)
-    except Exception as e:
-        # エラーが出た場合、別のモデル名（古い形式）でも試す自動切り替え機能
-        try:
-            model = genai.GenerativeModel(model_name='gemini-1.5-flash-latest')
-            response = model.generate_content(prompt)
-            st.markdown(response.text)
-        except:
-            st.error("最新モデルの起動に失敗しました。")
-            st.info(f"詳細: {e}")
+        if not success:
+            st.error("どのAIモデルも起動できませんでした。APIキーが有効化されるまで少し時間がかかる場合があります。")
+            st.info("一度Streamlit CloudのRebootをお試しください。")
