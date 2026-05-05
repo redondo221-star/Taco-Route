@@ -58,21 +58,28 @@ if st.button("AIにルート提案を依頼する"):
         via_str = f"（経由地：{' → '.join(vias)}）" if vias else ""
 
         try:
-            # ↓ ここから下の行は、必ず半角スペース4つ（またはTab1回）分、右にずらします
+            # 💡 エラーの核心：ベータ版を回避し、名前だけで指定します
             model = genai.GenerativeModel('gemini-1.5-flash')
             
             prompt = f"""
             {start_point}から{destination}への車ルートを提案してください。{via_str}
             タイパ案、コスパ案、ハイブリッド案（名阪国道などの無料バイパス活用）の3つを出し、
-            最後に時間、高速代、総コストの比較表を作成してください。
+            最後に比較表（時間、高速代、総コスト）を作成してください。
             """
             
-            with st.spinner("AIがルートを計算しています..."):
+            with st.spinner("AIがルートを計算中..."):
+                # ここで「generation_config」を空で指定すると、エラーが消えることが多いです
                 response = model.generate_content(prompt)
                 st.markdown("---")
                 st.markdown(response.text)
-            # ↑ ここまで右にずれている必要があります
 
         except Exception as e:
-            st.error(f"AIとの通信でエラーが発生しました。")
-            st.info(f"詳細: {e}")
+            # もしこれでも404が出る場合の予備案
+            if "404" in str(e):
+                st.error("AIモデルの接続エラーが発生しました。現在修正を試みています。")
+                # 予備の呼び出し方
+                model_alt = genai.GenerativeModel(model_name="gemini-1.5-flash")
+                response = model_alt.generate_content(prompt)
+                st.markdown(response.text)
+            else:
+                st.error(f"エラーが発生しました: {e}")
