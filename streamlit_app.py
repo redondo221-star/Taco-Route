@@ -3,9 +3,11 @@ import google.generativeai as genai
 from datetime import datetime
 from streamlit_js_eval import get_geolocation
 
-# 1. APIキーの設定
+# 1. AIの設定
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
+else:
+    st.error("SecretsにAPI_KEYが設定されていません。")
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
 st.title("🚗 Taco-Route")
@@ -46,12 +48,20 @@ if st.button("ルートを提案してもらう"):
     prompt = f"{start_point}から{destination}へのルート{via_info}を、出発日時{dt_str}で提案して。タイパ・コスパ・名阪国道活用の3案と比較表を出して。"
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 💡 対策：モデル名の指定を「models/gemini-1.5-flash」とフルネームにする
+        model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
+        
         with st.spinner("AIが計算中..."):
             response = model.generate_content(prompt)
             st.markdown("---")
             st.write(f"### 🕒 {dt_str} 出発の提案")
             st.markdown(response.text)
     except Exception as e:
-        st.error("エラーが発生しました。APIキーを確認してください。")
-        st.info(f"詳細: {e}")
+        # エラーが出た場合、別のモデル名（古い形式）でも試す自動切り替え機能
+        try:
+            model = genai.GenerativeModel(model_name='gemini-1.5-flash-latest')
+            response = model.generate_content(prompt)
+            st.markdown(response.text)
+        except:
+            st.error("最新モデルの起動に失敗しました。")
+            st.info(f"詳細: {e}")
