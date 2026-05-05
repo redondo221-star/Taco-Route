@@ -58,7 +58,10 @@ if st.button("AIにルート提案を依頼する"):
         via_str = f"（経由地：{' → '.join(vias)}）" if vias else ""
 
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # モデルを「名前」ではなく「設定」を含めて呼び出す形式にします
+model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash"
+)
             
             prompt = f"""
             {start_point}から{destination}へのルートを提案してください。{via_str}
