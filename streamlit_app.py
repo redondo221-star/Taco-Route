@@ -58,26 +58,22 @@ if st.button("AIにルート提案を依頼する"):
         via_str = f"（経由地：{' → '.join(vias)}）" if vias else ""
 
         try:
-            # モデルを「名前」ではなく「設定」を含めて呼び出す形式にします
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash"
-)
+            try:
+            # ↓ ここから下の行は、必ず半角スペース4つ（またはTab1回）分、右にずらします
+            model = genai.GenerativeModel('gemini-1.5-flash')
             
             prompt = f"""
-            {start_point}から{destination}へのルートを提案してください。{via_str}
-            
-            【指示】
-            ・必ず指定された経由地を通るルートにしてください。
-            ・「タイパ案」「コスパ案」「ハイブリッド案（無料バイパス活用）」の3つを出してください。
-            ・特に名阪国道、新4号、23号バイパス等の無料高規格道路の活用を検討してください。
-            ・最後に比較表（時間、距離、高速代、時間価値{time_value}円換算の総コスト）を提示してください。
+            {start_point}から{destination}への車ルートを提案してください。{via_str}
+            タイパ案、コスパ案、ハイブリッド案（名阪国道などの無料バイパス活用）の3つを出し、
+            最後に時間、高速代、総コストの比較表を作成してください。
             """
             
-            with st.spinner("最適な経由ルートを計算中..."):
+            with st.spinner("AIがルートを計算しています..."):
                 response = model.generate_content(prompt)
                 st.markdown("---")
-                st.write("### 🤖 AIの経由地考慮ルート")
-                st.markdown(response.text.replace("【高速", ":red[**【高速").replace("【一般", ":blue[**【一般").replace("】", "】**]"))
+                st.markdown(response.text)
+            # ↑ ここまで右にずれている必要があります
 
         except Exception as e:
-            st.error(f"エラー: {e}")
+            st.error(f"AIとの通信でエラーが発生しました。")
+            st.info(f"詳細: {e}")
