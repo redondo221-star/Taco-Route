@@ -6,8 +6,6 @@ from streamlit_js_eval import get_geolocation
 # 1. APIキーの設定
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
-else:
-    st.error("SecretsにAPI_KEYが設定されていません。")
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
 st.title("🚗 Taco-Route")
@@ -20,7 +18,7 @@ if loc:
     try:
         lat, lon = loc['coords']['latitude'], loc['coords']['longitude']
         current_pos = f"{lat}, {lon}"
-        st.success(f"現在地を取得しました: {current_pos}")
+        st.success(f"現在地を取得しました")
     except: pass
 
 # 3. 入力画面
@@ -35,11 +33,11 @@ with st.expander("🔄 経由地を追加する（最大3つ）"):
 
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=datetime.now(), key="date_p")
+    dep_date = st.date_input("出発日", value=datetime.now(), key="d_p")
 with c2:
-    dep_time = st.time_input("出発時刻", value=datetime.now().time(), key="time_p")
+    dep_time = st.time_input("出発時刻", value=datetime.now().time(), key="t_p")
 
-# 4. AI実行（究極のエラー回避策）
+# 4. AI実行
 if st.button("ルートを提案してもらう"):
     vias = [v for v in [v1, v2, v3] if v]
     via_info = f"（経由：{' → '.join(vias)}）" if vias else ""
@@ -47,20 +45,17 @@ if st.button("ルートを提案してもらう"):
     
     prompt = f"{start_point}から{destination}へのルート{via_info}を、出発日時{dt_str}で提案して。タイパ・コスパ・名阪国道活用の3案と比較表を出して。"
 
-    with st.spinner("AIが計算中..."):
+    with st.spinner("AIが計算中...（1分間の回数制限があるため、失敗したら30秒待ってね）"):
         try:
-            # 💡 【対策】特定のモデルを指名せず、利用可能なものから自動取得
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if not available_models:
-                st.error("利用可能なAIモデルが見つかりません。APIキーの有効化を待つか、Google AI Studioの設定を確認してください。")
-            else:
-                # リストの最初にあるモデル（通常は最新のもの）を使用
-                target_model = available_models[0]
-                model = genai.GenerativeModel(target_model)
-                response = model.generate_content(prompt)
-                st.markdown("---")
-                st.write(f"### 🕒 {dt_str} 出発の提案 ({target_model})")
-                st.markdown(response.text)
+            # 💡 最も制限が緩く安定している 1.5-flash を指定
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            st.markdown("---")
+            st.write(f"### 🕒 {dt_str} 出発の提案")
+            st.markdown(response.text)
         except Exception as e:
-            st.error("AIとの接続がまだ確立されていません。")
-            st.info(f"技術的な詳細: {e}")
+            if "429" in str(e):
+                st.warning("混み合っています。30秒ほど待ってからもう一度ボタンを押してください。")
+            else:
+                st.error("エラーが発生しました。")
+                st.info(f"詳細: {e}")
