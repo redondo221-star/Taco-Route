@@ -58,7 +58,6 @@ if st.button("AIにルート提案を依頼する"):
         via_str = f"（経由地：{' → '.join(vias)}）" if vias else ""
 
         try:
-            try:
             # ↓ ここから下の行は、必ず半角スペース4つ（またはTab1回）分、右にずらします
             model = genai.GenerativeModel('gemini-1.5-flash')
             
