@@ -35,11 +35,11 @@ with st.expander("🔄 経由地を追加する（最大3つ）"):
 
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=datetime.now(), key="d_p")
+    dep_date = st.date_input("出発日", value=datetime.now(), key="date_p")
 with c2:
-    dep_time = st.time_input("出発時刻", value=datetime.now().time(), key="t_p")
+    dep_time = st.time_input("出発時刻", value=datetime.now().time(), key="time_p")
 
-# 4. AI実行
+# 4. AI実行（究極のエラー回避策）
 if st.button("ルートを提案してもらう"):
     vias = [v for v in [v1, v2, v3] if v]
     via_info = f"（経由：{' → '.join(vias)}）" if vias else ""
@@ -47,23 +47,20 @@ if st.button("ルートを提案してもらう"):
     
     prompt = f"{start_point}から{destination}へのルート{via_info}を、出発日時{dt_str}で提案して。タイパ・コスパ・名阪国道活用の3案と比較表を出して。"
 
-    # 💡 404を回避するために「古い名前」から「最新」まで順に試す仕組み
-    success = False
-    models_to_try = ['gemini-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']
-    
     with st.spinner("AIが計算中..."):
-        for m_name in models_to_try:
-            try:
-                model = genai.GenerativeModel(m_name)
+        try:
+            # 💡 【対策】特定のモデルを指名せず、利用可能なものから自動取得
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            if not available_models:
+                st.error("利用可能なAIモデルが見つかりません。APIキーの有効化を待つか、Google AI Studioの設定を確認してください。")
+            else:
+                # リストの最初にあるモデル（通常は最新のもの）を使用
+                target_model = available_models[0]
+                model = genai.GenerativeModel(target_model)
                 response = model.generate_content(prompt)
                 st.markdown("---")
-                st.write(f"### 🕒 {dt_str} 出発の提案 ({m_name}を使用)")
+                st.write(f"### 🕒 {dt_str} 出発の提案 ({target_model})")
                 st.markdown(response.text)
-                success = True
-                break # 成功したらループを抜ける
-            except:
-                continue # 失敗したら次のモデルを試す
-        
-        if not success:
-            st.error("どのAIモデルも起動できませんでした。APIキーが有効化されるまで少し時間がかかる場合があります。")
-            st.info("一度Streamlit CloudのRebootをお試しください。")
+        except Exception as e:
+            st.error("AIとの接続がまだ確立されていません。")
+            st.info(f"技術的な詳細: {e}")
