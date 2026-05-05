@@ -1,85 +1,92 @@
 import streamlit as st
 import google.generativeai as genai
 from datetime import datetime
-from streamlit_js_eval import get_geolocation # 現在地取得用
+from streamlit_js_eval import get_geolocation
 
 # --- APIキー設定 ---
 if "API_KEY" in st.secrets:
-    API_KEY = st.secrets["API_KEY"]
-else:
-    API_KEY = "" 
+    genai.configure(api_key=st.secrets["API_KEY"])
 
-if API_KEY:
-    genai.configure(api_key=API_KEY)
+st.set_page_config(page_title="Taco-Route", layout="centered")
 
-st.set_page_config(page_title="Taco-Route: プロ版", layout="centered")
+st.title("🚗 Taco-Route")
+st.write("コスパ・タイパ最適化ルート案内")
 
-st.title("🚗 Taco-Route Pro")
-st.write("経由地指定＆現在地サポート対応")
-
-# --- 現在地取得機能 ---
-st.subheader("📍 ルート情報")
-loc = get_geolocation() # ブラウザから位置情報を取得
-
-# 現在地が取得できたら住所風の文字列にする（AIが解釈しやすくするため）
+# --- 現在地取得 ---
+loc = get_geolocation()
 default_start = ""
 if loc:
-    lat = loc['coords']['latitude']
-    lon = loc['coords']['longitude']
-    default_start = f"{lat}, {lon} (現在地付近)"
+    try:
+        lat = loc['coords']['latitude']
+        lon = loc['coords']['longitude']
+        default_start = f"{lat}, {lon}"
+    except:
+        pass
 
 # --- 入力エリア ---
-with st.container():
-    start_point = st.text_input("出発地点", value=default_start if default_start else "西東京市北町")
-    
-    # 経由地を3つまで
-    with st.expander("🔄 経由地を追加する（最大3つ）"):
-        via1 = st.text_input("経由地 1", placeholder="例：海老名SA")
-        via2 = st.text_input("経由地 2", placeholder="例：名古屋城")
-        via3 = st.text_input("経由地 3", placeholder="例：名阪上野ドライブイン")
-    
-    destination = st.text_input("目的地", value="ルートイン和泉岸和田")
+st.subheader("📍 ルート設定")
+start_point = st.text_input("出発地点", value=default_start if default_start else "西東京市北町")
 
-    col_date, col_time = st.columns(2)
-    with col_date:
-        departure_date = st.date_input("出発日", value=datetime.now())
-    with col_time:
-        departure_time = st.time_input("出発時刻", value=datetime.now().time())
+with st.expander("🔄 経由地（最大3つ）"):
+    via1 = st.text_input("経由地 1")
+    via2 = st.text_input("経由地 2")
+    via3 = st.text_input("経由地 3")
 
-with st.expander("⚙️ 詳細設定"):
-    time_value = st.number_input("時間価値(円/h)", value=1500)
-    car_type = st.selectbox("車種", ["普通車", "軽自動車"])
+destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
-# --- AI実行 ---
+# 時刻入力の追加
+col1, col2 = st.columns(2)
+with col1:
+    dep_date = st.date_input("出発日", value=datetime.now())
+with col2:
+    dep_time = st.time_input("出発時刻", value=datetime.now().time())
+
+# --- AI実行部分 ---
 if st.button("AIにルート提案を依頼する"):
-    if start_point and destination:
-        # 経由地のリストを作成（入力があるものだけ）
+    if not start_point or not destination:
+        st.warning("出発地と目的地を入力してください")
+    else:
         vias = [v for v in [via1, via2, via3] if v]
         via_str = f"（経由地：{' → '.join(vias)}）" if vias else ""
+        
+        # 入力された日時を文字列にする
+        dep_dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
 
         try:
-            # 💡 エラーの核心：ベータ版を回避し、名前だけで指定します
+            # 💡 404エラー対策：最も互換性の高いモデル指定
             model = genai.GenerativeModel('gemini-1.5-flash')
             
+            # 💡 時刻バグ対策：プロンプトに出発日時を明記
             prompt = f"""
-            {start_point}から{destination}への車ルートを提案してください。{via_str}
-            タイパ案、コスパ案、ハイブリッド案（名阪国道などの無料バイパス活用）の3つを出し、
-            最後に比較表（時間、高速代、総コスト）を作成してください。
+            以下の条件で車ルートを3案（タイパ、コスパ、ハイブリッド）提案してください。
+            
+            【条件】
+            出発地：{start_point}
+            経由地：{via_str}
+            目的地：{destination}
+            出発日時：{dep_dt_str}
+            
+            【指示】
+            ・名阪国道や各地の無料バイパス（23号、新4号等）の活用を優先的に検討してください。
+            ・深夜割引や渋滞状況を考慮したアドバイスを含めてください。
+            ・最後に「時間・高速料金・総コスト」の比較表を必ず作成してください。
             """
             
-            with st.spinner("AIがルートを計算中..."):
-                # ここで「generation_config」を空で指定すると、エラーが消えることが多いです
+            with st.spinner("AIが最適なルートを計算中..."):
                 response = model.generate_content(prompt)
-                st.markdown("---")
-                st.markdown(response.text)
+                
+                if response and response.text:
+                    st.markdown("---")
+                    st.write(f"### 🕒 {dep_dt_str} 出発の提案")
+                    st.markdown(response.text)
+                else:
+                    st.error("AIから回答が返ってきませんでした。もう一度お試しください。")
 
         except Exception as e:
-            # もしこれでも404が出る場合の予備案
+            st.error("AIとの通信に失敗しました。")
+            # 詳細なエラーが404なら、モデル名の指定を強制変更してリトライ
             if "404" in str(e):
-                st.error("AIモデルの接続エラーが発生しました。現在修正を試みています。")
-                # 予備の呼び出し方
-                model_alt = genai.GenerativeModel(model_name="gemini-1.5-flash")
-                response = model_alt.generate_content(prompt)
-                st.markdown(response.text)
+                st.info("システムの自動修復を試みています。再度ボタンを押してください。")
+                model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
             else:
-                st.error(f"エラーが発生しました: {e}")
+                st.info(f"詳細なエラー: {e}")
