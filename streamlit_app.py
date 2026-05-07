@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 from datetime import datetime
+import re
 from streamlit_js_eval import get_geolocation
 
 # API設定
@@ -30,11 +31,13 @@ with st.expander("🔄 経由地を追加する（最大3つ）"):
     v2 = st.text_input("経由地2", key="v2")
     v3 = st.text_input("経由地3", key="v3")
 
+# 💡 日時のデフォルトを「現在時刻」に設定
+now = datetime.now()
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=datetime.now(), key="d_k")
+    dep_date = st.date_input("出発日", value=now, key="d_k")
 with c2:
-    dep_time = st.time_input("出発時刻", value=datetime.now().time(), key="t_key")
+    dep_time = st.time_input("出発時刻", value=now.time(), key="t_key")
 
 if st.button("ルートを提案してもらう"):
     vias = [v for v in [v1, v2, v3] if v]
@@ -45,25 +48,31 @@ if st.button("ルートを提案してもらう"):
 
     with st.spinner("AIがルートを計算中..."):
         try:
-            # 💡 【重要】利用可能なモデルを自動で探し、接続する最強の仕組み
+            # モデルの自動取得
             available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            
-            # 1.5-flash または 1.5-pro を優先的に探す
             target_model = ""
             for m in available_models:
                 if "gemini-1.5-flash" in m:
                     target_model = m
                     break
-            
             if not target_model:
-                target_model = available_models[0] # 見つからなければ使えるやつをどれでも使う
+                target_model = available_models[0]
 
             model = genai.GenerativeModel(target_model)
             res = model.generate_content(prompt)
             
+            # 💡 【色付け機能】AIの回答テキストを加工
+            answer = res.text
+            # 高速道路を赤文字に
+            answer = answer.replace("高速道路", ":red[高速道路]")
+            answer = answer.replace("有料道路", ":red[有料道路]")
+            # 一般道を青文字に
+            answer = answer.replace("一般道", ":blue[一般道]")
+            answer = answer.replace("下道", ":blue[下道]")
+            
             st.markdown("---")
             st.write(f"### 🕒 {dt_str} 出発の提案")
-            st.markdown(res.text)
+            st.markdown(answer) # 加工したテキストを表示
             
         except Exception as e:
             st.error("AIとの通信でエラーが発生しました。")
