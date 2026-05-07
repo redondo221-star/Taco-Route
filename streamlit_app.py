@@ -11,19 +11,23 @@ if "API_KEY" in st.secrets:
 st.set_page_config(page_title="Taco-Route", layout="centered")
 st.title("🚗 Taco-Route")
 
-# 現在地取得
+# --- 💡 現在地取得の安定化 ---
 loc = get_geolocation()
 current_pos = ""
-if loc:
-    try:
-        lat, lon = loc['coords']['latitude'], loc['coords']['longitude']
-        current_pos = f"{lat}, {lon}"
-        st.success("現在地を取得しました")
-    except: pass
+if loc and 'coords' in loc:
+    lat = loc['coords']['latitude']
+    lon = loc['coords']['longitude']
+    # 緯度経度から住所に近い形式、または座標でセット
+    current_pos = f"{lat}, {lon}"
+    # 取得できたことを一度だけ表示
+    if "loc_notified" not in st.session_state:
+        st.success(f"現在地（{current_pos}）を捕捉しました")
+        st.session_state.loc_notified = True
 
 # 入力欄
 st.subheader("ルート設定")
-start_point = st.text_input("出発地点", value=current_pos if current_pos else "西東京市北町")
+# 現在地が取れていればそれを初期値に、取れていなければ空欄にする
+start_point = st.text_input("出発地点", value=current_pos if current_pos else "")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
 with st.expander("🔄 経由地を追加する（最大3つ）"):
@@ -31,33 +35,43 @@ with st.expander("🔄 経由地を追加する（最大3つ）"):
     v2 = st.text_input("経由地2", key="v2")
     v3 = st.text_input("経由地3", key="v3")
 
-# 💡 日時の現在時刻設定（リロード時に確実に最新にする）
-if 'start_time' not in st.session_state:
-    st.session_state.start_time = datetime.now()
-
+# --- 💡 日時のリアルタイム反映 ---
+# セッション内で常に最新を保つ
+now = datetime.now()
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=st.session_state.start_time)
+    dep_date = st.date_input("出発日", value=now)
 with c2:
-    dep_time = st.time_input("出発時刻", value=st.session_state.start_time.time())
+    dep_time = st.time_input("出発時刻", value=now.time())
 
 if st.button("ルートを提案してもらう"):
     vias = [v for v in [v1, v2, v3] if v]
     via_info = f"（経由：{' → '.join(vias)}）" if vias else ""
     dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
     
-    # 💡 AIへのプロンプトを強化：色付け用のタグを付けさせる
+    # 💡 AIへの指示をより厳格に（コスパとタイパの差別化）
     prompt = f"""
-    {start_point}から{destination}への車ルート{via_info}を、出発日時{dt_str}で詳細に提案して。
-    「タイパ案」「コスパ案」「名阪国道案」の3つを必ず含め、それぞれの比較表を出して。
+    {start_point}から{destination}への車ルート{via_info}を、出発日時{dt_str}で提案してください。
+    以下の3つの案を明確に分けて作成し、最後に比較表を出してください。
 
-    【重要ルール】
-    ルートの詳細説明の中の、
-    ・高速道路や有料道路を通る区間の説明は [RED]文章[/RED] というタグで囲んでください。
-    ・一般道や下道を通る区間の説明は [BLUE]文章[/BLUE] というタグで囲んでください。
+    1. 【タイパ案】
+       - 1分でも早く到着することを最優先。
+       - 高速道路・有料道路を最大限に使用する。
+       - 説明文の高速道路走行区間は [RED]文章[/RED] タグで囲む。
+
+    2. 【コスパ案】
+       - 料金の安さを最優先。
+       - 原則として「一般道（下道）」のみを使用し、有料道路は極力避ける。
+       - 説明文の一般道走行区間は [BLUE]文章[/BLUE] タグで囲む。
+
+    3. 【名阪国道案】
+       - 無料の自動車専用道路である「名阪国道」などの高規格道路を組み込んだバランスの良いルート。
+       - 有料区間は [RED]文章[/RED]、無料区間（一般道・名阪国道）は [BLUE]文章[/BLUE] タグで囲む。
+
+    各案で、推定時間と概算料金を必ず明記してください。
     """
 
-    with st.spinner("AIがルートを計算中..."):
+    with st.spinner("AIが最適なルートを計算中..."):
         try:
             available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             target_model = next((m for m in available_models if "gemini-1.5-flash" in m), available_models[0])
@@ -65,11 +79,9 @@ if st.button("ルートを提案してもらう"):
             model = genai.GenerativeModel(target_model)
             res = model.generate_content(prompt)
             
-            # 💡 タグをStreamlitのカラー表示に変換する
+            # タグ変換
             answer = res.text
-            # [RED]...[/RED] を赤文字に
             answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
-            # [BLUE]...[/BLUE] を青文字に
             answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
             
             st.markdown("---")
@@ -77,5 +89,5 @@ if st.button("ルートを提案してもらう"):
             st.markdown(answer)
             
         except Exception as e:
-            st.error("AIとの通信でエラーが発生しました。")
-            st.write(f"詳細な原因: {e}")
+            st.error("エラーが発生しました。")
+            st.write(f"デバッグ情報: {e}")
