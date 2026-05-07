@@ -32,7 +32,7 @@ with st.expander("🔄 経由地を追加する（最大3つ）"):
 
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=datetime.now(), key="d_key")
+    dep_date = st.date_input("出発日", value=datetime.now(), key="d_k")
 with c2:
     dep_time = st.time_input("出発時刻", value=datetime.now().time(), key="t_key")
 
@@ -43,23 +43,25 @@ if st.button("ルートを提案してもらう"):
     
     prompt = f"{start_point}から{destination}への車ルート{via_info}を、出発日時{dt_str}で提案して。タイパ・コスパ・名阪国道案と、最後に比較表を出して。"
 
-    with st.spinner("AIが計算中..."):
+    with st.spinner("AIがルートを計算中..."):
         try:
-            # 💡 404対策：複数のモデル名を順番に試す
-            model_names = ['gemini-1.5-flash', 'gemini-pro', 'models/gemini-1.5-flash']
-            res = None
-            for m_name in model_names:
-                try:
-                    model = genai.GenerativeModel(m_name)
-                    res = model.generate_content(prompt)
-                    if res: break
-                except: continue
+            # 💡 【重要】特定の名前を使わず、あなたのキーで「今使えるモデル」を自動で見つける
+            model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
-            if res:
-                st.markdown("---")
-                st.write(f"### 🕒 {dt_str} 出発の提案")
-                st.markdown(res.text)
-            else:
-                st.error("現在、GoogleのAIサーバーが混み合っているか、接続が拒否されました。30秒後に再試行してください。")
+            # AI Studioで返事が来たモデル（flashなど）を優先的に探す
+            target_model = "gemini-1.5-flash" # デフォルト
+            for m in model_list:
+                if "1.5-flash" in m:
+                    target_model = m
+                    break
+            
+            model = genai.GenerativeModel(target_model)
+            res = model.generate_content(prompt)
+            
+            st.markdown("---")
+            st.write(f"### 🕒 {dt_str} 出発の提案")
+            st.markdown(res.text)
+            
         except Exception as e:
-            st.error(f"接続エラーが発生しました。しばらく待ってからお試しください。")
+            st.error("現在、AIとの通信が制限されています。")
+            st.info(f"AI Studioで返信が来るのにここでエラーが出る場合、API_KEYの貼り付けミス（前後に余計な文字がある等）の可能性があります。一度Secretsを確認してください。")
