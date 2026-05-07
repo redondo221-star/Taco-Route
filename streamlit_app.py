@@ -49,7 +49,7 @@ if st.button("ルートを提案してもらう"):
             model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
             # AI Studioで返事が来たモデル（flashなど）を優先的に探す
-            target_model = "gemini-1.5-flash" # デフォルト
+            target_model = "gemini-pro" # デフォルト
             for m in model_list:
                 if "1.5-flash" in m:
                     target_model = m
