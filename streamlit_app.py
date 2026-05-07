@@ -11,15 +11,19 @@ if "API_KEY" in st.secrets:
 st.set_page_config(page_title="Taco-Route", layout="centered")
 st.title("🚗 Taco-Route")
 
-# --- 💡 現在地取得 ---
-# 画面上部に配置し、取得できたら自動的に下の入力欄へ反映させます
+# --- 💡 1. 日時のデフォルト設定（修正版） ---
+# 初回起動時のみ現在時刻を保存。これで5月7日に固定されるのを防ぎます
+if 'init_dt' not in st.session_state:
+    st.session_state.init_dt = datetime.now()
+
+# --- 💡 2. 現在地取得 ---
 loc = get_geolocation()
 default_start = ""
 if loc and 'coords' in loc:
     lat, lon = loc['coords']['latitude'], loc['coords']['longitude']
     default_start = f"{lat}, {lon}"
 
-# --- 💡 入力欄 ---
+# --- 💡 3. 入力画面 ---
 st.subheader("ルート設定")
 start_point = st.text_input("出発地点", value=default_start if default_start else "")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
@@ -29,28 +33,25 @@ with st.expander("🔄 経由地を追加する（最大3つ）"):
     v2 = st.text_input("経由地2", key="v2")
     v3 = st.text_input("経由地3", key="v3")
 
-# --- 💡 日時設定（修正の肝） ---
-# st.session_stateを使わず、直接現在時刻をデフォルト値に設定します。
-# こうすることで、ユーザーが手動で変えた値がそのまま保持されるようになります。
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=datetime.now())
+    # 初期値としてsession_stateの「今」を使用。ユーザーの変更も受け付ける
+    dep_date = st.date_input("出発日", value=st.session_state.init_dt)
 with c2:
-    dep_time = st.time_input("出発時刻", value=datetime.now().time())
+    dep_time = st.time_input("出発時刻", value=st.session_state.init_dt.time())
 
 if st.button("ルートを提案してもらう"):
-    # 出発地点のチェック
     if not start_point:
-        st.error("出発地点を入力してください（現在地が表示されるまで数秒かかる場合があります）")
+        st.error("出発地点を入力してください。")
         st.stop()
 
     vias = [v for v in [v1, v2, v3] if v]
-    via_info = f"（経由地：{' → '.join(vias)}）" if vias else ""
+    via_info = f"（経由：{' → '.join(vias)}）" if vias else ""
     dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
     
-    # 💡 AIへの指示（プロンプト）：コスパ案での高速使用を「厳禁」に
+    # 💡 4. AIへの「究極の指示書」
     prompt = f"""
-    以下の条件で最適な車ルートを3つ提案してください。
+    以下の条件で車ルートを3つ提案してください。
 
     条件：
     - 出発地点：{start_point}
@@ -58,31 +59,44 @@ if st.button("ルートを提案してもらう"):
     - 出発日時：{dt_str}
     - {via_info}
 
-    【絶対に守るべき指示】
-    1. タイパ案：高速道路・有料道路をフル活用してください。説明文全体を [RED]案の説明[/RED] タグで囲んでください。
-    2. コスパ案：有料道路・高速道路は「1メートルも」使わないでください。100%一般道（下道）のみのルートにしてください。説明文全体を [BLUE]案の説明[/BLUE] タグで囲んでください。
-    3. バランス案：無料の高規格道路である「名阪国道」などや、新４号線などのように信号が少なく平均速度の速い地元の人たちがよく使うルートを組み込んだバランス重視ルート。有料区間は [RED]...[/RED]、無料区間（一般道・名阪国道）は [BLUE]...[/BLUE] タグで囲んでください。
+    【必ず守るべき役割分担】
+    1. 【タイパ案】
+       - 有料道路・高速道路をフル活用。1分でも早く着くルート。
+       - 高速区間の説明は必ず [RED]...[/RED] で囲む。
 
-    最後に、3つの案の「所要時間」「通行料金」「合計距離」を比較表で出してください。
+    2. 【コスパ案】
+       - 有料道路は一切禁止。100%一般道（下道）のみ。
+       - 一般道の走行説明は必ず [BLUE]...[/BLUE] で囲む。
+
+    3. 【バランス案（地元推奨ルート）】
+       - 単なる高速・下道ではなく「名阪国道」や「新4号バイパス」のような、信号が少なく平均速度が非常に速い高規格道路を優先的に使用。
+       - 高速代を浮かせつつ、時間は高速に近い「地元民がよく使う賢いルート」を提案。
+       - 有料区間は [RED]、無料区間（高規格道含む）は [BLUE] で囲む。
+
+    最後に比較表（時間・料金・距離）を出してください。
     """
 
-    with st.spinner("AIが最適なルートを計算中..."):
+    with st.spinner("AIがルートを分析中..."):
         try:
             available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             target_model = next((m for m in available_models if "gemini-1.5-flash" in m), available_models[0])
             model = genai.GenerativeModel(target_model)
             
             res = model.generate_content(prompt)
-            
-            # タグをStreamlitのカラー表示に変換
             answer = res.text
+            
+            # 💡 5. 文字列置換による色付けの二段構え
+            # タグの変換
             answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
             answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
             
+            # 単語単位でも念のため色を付ける（保険）
+            answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路)', r':red[\1]', answer)
+            answer = re.sub(r'(一般道|下道|国道|バイパス)', r':blue[\1]', answer)
+
             st.markdown("---")
             st.write(f"### 🕒 {dt_str} 出発の提案")
             st.markdown(answer)
             
         except Exception as e:
-            st.error("AIとの通信に失敗しました。")
-            st.write(f"詳細: {e}")
+            st.error(f"エラーが発生しました: {e}")
