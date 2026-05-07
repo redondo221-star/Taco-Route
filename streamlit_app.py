@@ -46,7 +46,7 @@ if st.button("ルートを提案してもらう"):
     with st.spinner("AIがルートを計算中..."):
         try:
             # 💡 【ここを修正】最新のflashモデルを直接指定します
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel("models/gemini-1.5-flash")
             res = model.generate_content(prompt)
             
             st.markdown("---")
