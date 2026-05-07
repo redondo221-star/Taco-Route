@@ -45,17 +45,8 @@ if st.button("ルートを提案してもらう"):
 
     with st.spinner("AIがルートを計算中..."):
         try:
-            # 💡 【重要】特定の名前を使わず、あなたのキーで「今使えるモデル」を自動で見つける
-            model_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            
-            # AI Studioで返事が来たモデル（flashなど）を優先的に探す
-            target_model = "gemini-pro" # デフォルト
-            for m in model_list:
-                if "1.5-flash" in m:
-                    target_model = m
-                    break
-            
-            model = genai.GenerativeModel(target_model)
+            # 💡 【ここを修正】最新のflashモデルを直接指定します
+            model = genai.GenerativeModel("gemini-1.5-flash")
             res = model.generate_content(prompt)
             
             st.markdown("---")
@@ -63,6 +54,5 @@ if st.button("ルートを提案してもらう"):
             st.markdown(res.text)
             
         except Exception as e:
-            st.error(f"デバッグ情報: {e}")
-            st.error("現在、AIとの通信が制限されています。")
-            st.info(f"AI Studioで返信が来るのにここでエラーが出る場合、API_KEYの貼り付けミス（前後に余計な文字がある等）の可能性があります。一度Secretsを確認してください。")
+            st.error("エラーが発生しました。")
+            st.write(f"デバッグ情報: {e}")
