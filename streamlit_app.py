@@ -63,5 +63,6 @@ if st.button("ルートを提案してもらう"):
             st.markdown(res.text)
             
         except Exception as e:
+            st.error(f"デバッグ情報: {e}")
             st.error("現在、AIとの通信が制限されています。")
             st.info(f"AI Studioで返信が来るのにここでエラーが出る場合、API_KEYの貼り付けミス（前後に余計な文字がある等）の可能性があります。一度Secretsを確認してください。")
