@@ -44,9 +44,21 @@ if st.button("ルートを提案してもらう"):
     prompt = f"{start_point}から{destination}への車ルート{via_info}を、出発日時{dt_str}で提案して。タイパ・コスパ・名阪国道案と、最後に比較表を出して。"
 
     with st.spinner("AIがルートを計算中..."):
+        with st.spinner("AIがルートを計算中..."):
         try:
-            # 💡 【ここを修正】最新のflashモデルを直接指定します
-            model = genai.GenerativeModel("models/gemini-1.5-flash")
+            # 💡 利用可能なモデルを自動でリストアップ
+            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            
+            # 1.5-flash があれば優先、なければリストの最初にあるものを使う
+            target = ""
+            for m in available_models:
+                if "1.5-flash" in m:
+                    target = m
+                    break
+            if not target:
+                target = available_models[0]
+
+            model = genai.GenerativeModel(target)
             res = model.generate_content(prompt)
             
             st.markdown("---")
