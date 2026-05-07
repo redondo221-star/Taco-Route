@@ -1,8 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
-from datetime import datetime
 import re
-from streamlit_js_eval import get_geolocation, streamlit_js_eval
+from datetime import datetime
 
 # API設定
 if "API_KEY" in st.secrets:
@@ -11,82 +10,72 @@ if "API_KEY" in st.secrets:
 st.set_page_config(page_title="Taco-Route", layout="centered")
 st.title("🚗 Taco-Route")
 
-# --- 💡 【重要】ブラウザから本当の現在時刻を取得する ---
-# サーバーのdatetime.now()が狂っているため、JSでPC/スマホの時刻を強制取得します
-if "js_now" not in st.session_state:
-    # ブラウザの現在時刻（ISO形式）を取得
-    js_time_str = streamlit_js_eval(js_expressions="new Date().toISOString()", key='js_now_time')
-    if js_time_str:
-        # 取得した時刻をPythonのdatetimeオブジェクトに変換
-        st.session_state.js_now = datetime.fromisoformat(js_time_str.replace('Z', '+00:00'))
-    else:
-        # 取得できるまでの仮置き
-        st.session_state.js_now = datetime.now()
-
-# --- 💡 現在地取得 ---
-loc = get_geolocation()
-default_start = ""
-if loc and 'coords' in loc:
-    lat, lon = loc['coords']['latitude'], loc['coords']['longitude']
-    default_start = f"{lat}, {lon}"
-
 # --- 💡 入力画面 ---
 st.subheader("ルート設定")
-start_point = st.text_input("出発地点", value=default_start if default_start else "")
+
+# 現在地取得（js-evalは日時に悪影響を与える可能性があるため一旦外し、シンプルにします）
+start_point = st.text_input("出発地点", value="", placeholder="例：西東京市北町")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
-with st.expander("🔄 経由地を追加する（最大3つ）"):
+with st.expander("🔄 経由地を追加する"):
     v1 = st.text_input("経由地1", key="v1")
     v2 = st.text_input("経由地2", key="v2")
-    v3 = st.text_input("経由地3", key="v3")
 
+# --- 💡 日時設定（ここが修正の肝） ---
+# サーバーの時刻を使わず、あえて固定値を入れず「今日」をユーザーに選ばせる形式にします
+st.info("⚠️ サーバーの時刻が狂っているため、出発日時をカレンダーから選んでください")
 c1, c2 = st.columns(2)
 with c1:
-    # ブラウザから取得した「本当の今」をセット
-    dep_date = st.date_input("出発日", value=st.session_state.js_now)
+    dep_date = st.date_input("1. 出発日を選んでください")
 with c2:
-    dep_time = st.time_input("出発時刻", value=st.session_state.js_now.time())
+    dep_time = st.time_input("2. 出発時刻を選んでください")
 
 if st.button("ルートを提案してもらう"):
     if not start_point:
         st.error("出発地点を入力してください。")
         st.stop()
 
-    vias = [v for v in [v1, v2, v3] if v]
+    vias = [v for v in [v1, v2] if v]
     via_info = f"（経由：{' → '.join(vias)}）" if vias else ""
     dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
     
-    # AIへの指示：色付けとバランス案の定義を徹底
+    # AIへの指示：役割を完全に分ける
     prompt = f"""
-    条件：出発地点{start_point}、目的地{destination}、日時{dt_str} {via_info}
+    条件：出発{start_point}、到着{destination}、日時{dt_str} {via_info}
     
-    以下の3案を詳細に提案し、最後に比較表を出して。
+    以下の3つの異なるルートを提案し、最後に比較表を出せ。
     
-    1.【タイパ案】高速フル活用。高速区間は必ず [RED]...[/RED] で囲む。所要時間最短。
-    2.【コスパ案】一般道優先ルート。説明は必ず [BLUE]...[/BLUE] で囲む。
-    3.【バランス案】名阪国道や新4号バイパス等の「信号が少なく速い無料の道」を優先。
-       地元民が高速を避けて使う爆速下道ルート。有料は [RED]、無料・バイパスは [BLUE] で囲む。
+    1.【タイパ案】
+    最短時間優先。高速道路を最大限使う。
+    高速区間の説明は [RED]...[/RED] で囲むこと。
+
+    2.【コスパ案】
+    料金0円優先。有料道路は一切使わず、100%一般道（下道）のみ。
+    説明は [BLUE]...[/BLUE] で囲むこと。
+
+    3.【バランス案（地元推奨）】
+    名阪国道、新4号バイパス、上武道路など、信号が少なく平均速度が速い「無料の高規格道路」を優先的に使う賢いルート。
+    有料区間は [RED]、無料区間・バイパスは [BLUE] で囲むこと。
     """
 
     with st.spinner("AIがルートを分析中..."):
         try:
-            available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            target_model = next((m for m in available_models if "gemini-1.5-flash" in m), available_models[0])
-            model = genai.GenerativeModel(target_model)
-            
+            model = genai.GenerativeModel("gemini-1.5-flash")
             res = model.generate_content(prompt)
             answer = res.text
             
-            # 色付け変換（タグ＋単語）
+            # --- 💡 色付けの強制処理 ---
+            # AIが付けたタグを変換
             answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
             answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
-            # 保険の単語色付け
-            answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路)', r':red[\1]', answer)
-            answer = re.sub(r'(一般道|下道|国道|バイパス|名阪国道|新4号)', r':blue[\1]', answer)
+            
+            # タグ付けを忘れた場合のための保険（単語で色付け）
+            answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路|PA|SA)', r':red[\1]', answer)
+            answer = re.sub(r'(一般道|下道|国道|バイパス|名阪国道|新4号|上武道路)', r':blue[\1]', answer)
 
             st.markdown("---")
             st.write(f"### 🕒 {dt_str} 出発の提案")
             st.markdown(answer)
             
         except Exception as e:
-            st.error(f"エラー: {e}")
+            st.error(f"エラーが発生しました。APIキーを確認してください。")
