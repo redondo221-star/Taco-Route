@@ -44,21 +44,21 @@ if st.button("ルートを提案してもらう"):
     prompt = f"{start_point}から{destination}への車ルート{via_info}を、出発日時{dt_str}で提案して。タイパ・コスパ・名阪国道案と、最後に比較表を出して。"
 
     with st.spinner("AIがルートを計算中..."):
-        with st.spinner("AIがルートを計算中..."):
         try:
-            # 💡 利用可能なモデルを自動でリストアップ
+            # 💡 【重要】利用可能なモデルを自動で探し、接続する最強の仕組み
             available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
-            # 1.5-flash があれば優先、なければリストの最初にあるものを使う
-            target = ""
+            # 1.5-flash または 1.5-pro を優先的に探す
+            target_model = ""
             for m in available_models:
-                if "1.5-flash" in m:
-                    target = m
+                if "gemini-1.5-flash" in m:
+                    target_model = m
                     break
-            if not target:
-                target = available_models[0]
+            
+            if not target_model:
+                target_model = available_models[0] # 見つからなければ使えるやつをどれでも使う
 
-            model = genai.GenerativeModel(target)
+            model = genai.GenerativeModel(target_model)
             res = model.generate_content(prompt)
             
             st.markdown("---")
@@ -66,5 +66,5 @@ if st.button("ルートを提案してもらう"):
             st.markdown(res.text)
             
         except Exception as e:
-            st.error("エラーが発生しました。")
-            st.write(f"デバッグ情報: {e}")
+            st.error("AIとの通信でエラーが発生しました。")
+            st.write(f"詳細な原因: {e}")
