@@ -3,76 +3,85 @@ import google.generativeai as genai
 import re
 from datetime import datetime, timedelta
 
-# --- 💡 1. モデル名を最も安定している 'gemini-pro' に固定 ---
+# --- 1. モデル名を最も安定している旧名称に固定 ---
 MODEL_NAME = 'gemini-pro'
 
+# APIキーの設定
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
+else:
+    st.error("APIキーが設定されていません。")
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
 
-# --- 💡 2. 日付・時刻の補正 ---
-# サーバーの時刻が5月8日固定なら、手動で今日の日付を入れられるようにしつつ、
-# デフォルトで「日本時間」を計算してセットします。
-now_utc = datetime.utcnow()
-now_jst = now_utc + timedelta(hours=9)
+# --- 2. 日本時間の「今日・今」を計算 ---
+# サーバーの時刻に関わらず、UTC+9時間で日本の現在時刻を算出
+now_jst = datetime.utcnow() + timedelta(hours=9)
 
 st.title("🚗 Taco-Route")
+st.info("※現在地・時刻の自動取得を停止し、手動変更を優先する安定モードで動作中です。")
 
-# --- 💡 3. メイン画面 ---
+# --- 3. 入力フォーム ---
 st.subheader("📍 ルート・コスト設定")
 
-# 位置情報取得が不安定なため、出発地は空欄（または前回の値）にして手動入力を促します
-start_point = st.text_input("出発地点", placeholder="例：東京駅、または現在地の住所を入力")
+# 現在地は住所または地名を手入力
+start_point = st.text_input("出発地点", placeholder="例：宇都宮駅、現在地の住所など")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
-with st.expander("🔄 経由地設定"):
+with st.expander("🔄 経由地（オプション）"):
     v1 = st.text_input("経由地1", key="v1")
     v2 = st.text_input("経由地2", key="v2")
 
-st.write("🚗 車種とコストの設定")
 col1, col2 = st.columns(2)
 with col1:
     vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 with col2:
-    time_val = st.number_input("時間価値 (円/h)", value=1500)
+    time_val = st.number_input("時間価値 (円/1時間)", value=1500, step=100)
 
-# 日付・時刻の入力（ここで「今日の日付」が正しく入るように補正）
+# --- 🕒 出発日時の設定 (ここが自由に変更可能になります) ---
+st.write("🕒 出発日時を選択してください")
 c1, c2 = st.columns(2)
 with c1:
+    # 初期値を「日本の今日」に設定。カレンダーで自由に変更可能
     dep_date = st.date_input("出発日", value=now_jst.date())
 with c2:
+    # 初期値を「日本の今」に設定。自由に変更可能
     dep_time = st.time_input("出発時刻", value=now_jst.time())
 
-# --- 💡 4. AI実行 ---
-if st.button("🚀 最適ルートを提案してもらう"):
+# --- 4. AIルート提案の実行 ---
+if st.button("🚀 この条件でルートを提案してもらう"):
     if not start_point:
-        st.error("出発地点を入力してください。")
+        st.warning("出発地点を入力してください。")
         st.stop()
 
+    # 日時を文字列に変換
     dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
     
     prompt = f"""
-    条件：出発{start_point}、目的地{destination}、日時{dt_str}
+    あなたはルートガイドです。以下の条件で最適な3つのルートを提案してください。
+    
+    【条件】
+    出発地：{start_point}
+    目的地：{destination}
+    経由地：{v1}, {v2}
+    出発日時：{dt_str}
     車種：{vehicle}
-    時間価値：{time_val}円/h
+    ユーザーの時間価値：{time_val}円/h
     
-    ETC使用前提。
-    以下の計算式を厳守して各ルートを提案してください。
-    【計算ルール】
-    - 高速料金：100km以下：(24.6円*Km+150円)*1.1
-    - 軽自動車は普通車の20%割引
+    【ルール】
+    1. 高速料金を概算してください（100km以下：(24.6円*Km+150円)*1.1、軽自動車は20%引）。
+    2. 有料道路（高速）は [RED]、一般道・バイパスは [BLUE] でルート詳細を記載してください。
+    3. 最後に、有料料金と（時間×時間価値）を合計した「総コスト」を比較する表を作成してください。
     
-    【提案ルート】
-    1.【タイパ案】最短時間。高速フル活用。有料区間は [RED]、一般道は [BLUE]
-    2.【コスパ案】一般道優先。[BLUE]
-    3.【バランス案】無料バイパス優先。
-    最後にルート比較表を出してください。
+    提案ルート：
+    ①タイパ優先（高速多用）
+    ②コスパ優先（一般道メイン）
+    ③バランス優先（無料バイパス活用）
     """
 
-    with st.spinner("AIが計算中..."):
+    with st.spinner("AIが最適なルートを計算中..."):
         try:
-            # 404エラーを回避するため gemini-pro を使用
+            # 安定したモデル名 'gemini-pro' を使用
             model = genai.GenerativeModel(MODEL_NAME)
             res = model.generate_content(prompt)
             answer = res.text
@@ -80,10 +89,12 @@ if st.button("🚀 最適ルートを提案してもらう"):
             # 色付け
             answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
             answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
-            
+            answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路|PA|SA)', r':red[\1]', answer)
+            answer = re.sub(r'(一般道|下道|国道|バイパス|名阪国道|新4号|上武道路)', r':blue[\1]', answer)
+
             st.markdown("---")
-            st.markdown(f"### 🕒 {dt_str} 出発の提案")
+            st.markdown(f"### 🕒 {dt_str} 出発のルート提案")
             st.markdown(answer)
+            
         except Exception as e:
-            st.error(f"エラーが発生しました: {e}")
-            st.info("APIキーの設定や、Google AI Studioでのモデルの有効化を確認してください。")
+            st.error(f"AIとの通信に失敗しました。時間をおいて再度お試しください。({e})")
