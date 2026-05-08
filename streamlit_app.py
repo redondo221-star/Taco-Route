@@ -9,77 +9,68 @@ if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
+
+# CSSで見た目を調整
+st.markdown("""
+    <style>
+    .stButton>button { width: 100%; border-radius: 10px; height: 3em; background-color: #ff4b4b; color: white; }
+    .stAlert { margin-top: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("🚗 Taco-Route")
 
-# --- 💡 1. ブラウザの現在日時をJavaScriptで取得 ---
-# サーバーの2026/05/08を完全に無視するため、ブラウザの「生の日時」を直接取ります
-js_now = streamlit_js_eval(js_expressions="new Date().toISOString()", key='js_full_date_v3')
+# --- 💡 1. データの同期状態を管理 ---
+if 'init_done' not in st.session_state:
+    st.session_state.init_done = False
 
-# --- 💡 2. 高精度な位置情報の取得 ---
-st.sidebar.markdown("### 🛰️ 位置情報設定")
-if st.sidebar.button("現在地を更新"):
+# --- 💡 2. ボタンで現在地と現在時刻を「強制取得」 ---
+st.subheader("📍 1. まずは現在地と時刻を同期")
+if st.button("🔄 現在地と時刻をスマホと同期する"):
+    # JavaScriptを走らせてブラウザの生データを取得（キーを毎回変えてキャッシュを無効化）
+    unique_key = datetime.now().strftime("%Y%m%d%H%M%S")
+    st.session_state.js_now = streamlit_js_eval(js_expressions="new Date().toISOString()", key=f'js_{unique_key}')
+    st.session_state.loc = get_geolocation()
+    st.session_state.init_done = True
     st.rerun()
 
-# 精度を高めるためのオプションを指定して現在地を取得
-loc = get_geolocation()
+# 同期されたデータの解析
+now = datetime.now() # 予備
+if st.session_state.get('js_now'):
+    now = datetime.fromisoformat(st.session_state.js_now.replace('Z', '+00:00')) + timedelta(hours=9)
 
-# --- 💡 3. 日付と時刻の確定ロジック ---
-if js_now:
-    # ブラウザのUTCをJST(+9時間)に変換
-    current_dt = datetime.fromisoformat(js_now.replace('Z', '+00:00')) + timedelta(hours=9)
-    # 確実に「今日」の日付と「今」の時刻をセット
-    default_date = current_dt.date()
-    default_time = current_dt.time()
-else:
-    # JavaScriptがまだ反応していない場合は一時的にNone（空）にする
-    default_date = None
-    default_time = None
-
-# --- 💡 4. 入力画面 ---
-st.subheader("📍 ルート・コスト設定")
-
-# 現在地の反映
 start_val = ""
-if loc and 'coords' in loc:
-    start_val = f"{loc['coords']['latitude']}, {loc['coords']['longitude']}"
-else:
-    start_val = ""
+if st.session_state.get('loc') and 'coords' in st.session_state.loc:
+    coords = st.session_state.loc['coords']
+    start_val = f"{coords['latitude']}, {coords['longitude']}"
 
-# 出発地点の入力（現在地が取れていれば自動入力）
-start_point = st.text_input("出発地点", value=start_val, placeholder="現在地取得中...（住所入力も可）")
+# --- 💡 3. 入力画面 ---
+st.markdown("---")
+st.subheader("🗺️ 2. ルート・コスト設定")
 
-if not start_val:
-    st.caption("⚠️ 現在地が自動取得されない場合は、ブラウザの位置情報許可を確認するか、直接住所を入力してください。")
-
+start_point = st.text_input("出発地点", value=start_val, placeholder="上のボタンを押すか、住所を入力")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
 with st.expander("🔄 経由地を設定する"):
     v1 = st.text_input("経由地1", key="v1")
     v2 = st.text_input("経由地2", key="v2")
 
-st.write("🚗 車種とコストの設定")
 col_v1, col_v2 = st.columns(2)
 with col_v1:
-    vehicle_type = st.radio("車種を選択", ["普通車", "軽自動車"], horizontal=True)
+    vehicle_type = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 with col_v2:
-    time_value = st.number_input("時間価値 (円/1時間)", value=1500, step=100)
+    time_value = st.number_input("時間価値 (円/h)", value=1500, step=100)
 
-# --- 🕒 日時設定（ブラウザ時刻を強制反映） ---
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=default_date)
+    dep_date = st.date_input("出発日", value=now.date())
 with c2:
-    dep_time = st.time_input("出発時刻", value=default_time)
+    dep_time = st.time_input("出発時刻", value=now.time())
 
-if not js_now:
-    st.warning("🕒 ブラウザの時刻を同期中... 数秒待っても日付が変わらない場合は、一度ページを更新してください。")
-
-if st.button("🚀 最適ルートを提案してもらう"):
+# --- 💡 4. AI実行 ---
+if st.button("🚀 この条件でルートを検索"):
     if not start_point:
         st.error("出発地点を入力してください。")
-        st.stop()
-    if dep_date is None:
-        st.error("出発日が正しく設定されていません。カレンダーから選んでください。")
         st.stop()
 
     vias = [v for v in [v1, v2] if v]
@@ -91,21 +82,21 @@ if st.button("🚀 最適ルートを提案してもらう"):
     車種：{vehicle_type}
     ユーザーの時間価値：1時間あたり {time_value} 円
     
-    ETCを使用する前提でコストやICを選択すること。
-    高速道路料金の計算：
+    ETC使用前提。
+    高速道路料金計算：
     - 100km以下：(24.6円 * Km + 150円) * 1.1
-    - 100km〜200kmの区間：距離比例料金を25%割引　全体の距離料金を割り引くわけではない
-    - 200km以上の区間：距離比例料金を30%割引
-    - 土日・夜間割引を考慮
-    - 軽自動車は、普通車の料金から20%割引
+    - 100km〜200km：距離料金25%割引　この区間の距離比例料金を割り引くこと。　全体の料金を割り引くわけではない
+    - 200km以上：距離料金30%割引　この区間の距離比例料金を割り引くこと。　全体の料金を割り引くわけではない
+    - 土日・夜間割引考慮すること
+    - 軽自動車は普通車の20%割引
     
-    以下の3ルートを提案し、各ルートの「有料料金＋（時間×時間価値）」の合計コストを計算して比較表を出してください。
+    以下の3ルートを詳細に提案し、各ルートの「有料料金＋（時間×時間価値）」の合計コストを比較表で出してください。
     
     1.【タイパ案】最短時間優先。高速フル活用。[RED]高速区間[/RED]
     2.【コスパ案】一般道優先。[BLUE]一般道区間[/BLUE]
     3.【バランス案（地元推奨）】爆速無料バイパス（名阪国道、新4号等）を優先。
-       有料は [RED]、無料の高規格道は [BLUE] で囲む。
-       高速代がユーザーの時間価値より高い場合は、一般道を提案。
+       有料は [RED]、無料高規格道は [BLUE] で囲む。
+       高速代が時間価値より高い場合は一般道を使用。
     """
 
     with st.spinner("AIが最適なルートを計算中..."):
@@ -116,7 +107,6 @@ if st.button("🚀 最適ルートを提案してもらう"):
             res = model.generate_content(prompt)
             answer = res.text
             
-            # 色付け処理
             answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
             answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
             answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路|PA|SA)', r':red[\1]', answer)
@@ -125,6 +115,5 @@ if st.button("🚀 最適ルートを提案してもらう"):
             st.markdown("---")
             st.write(f"### 🕒 {dt_str} 出発の提案")
             st.markdown(answer)
-            
         except Exception as e:
             st.error(f"AIエラー: {e}")
