@@ -12,37 +12,50 @@ st.set_page_config(page_title="Taco-Route", layout="centered")
 st.title("🚗 Taco-Route")
 
 # --- 💡 1. ブラウザの現在日時をJavaScriptで取得 ---
-# 確実に日付と時刻の両方を取得するため、ISO文字列を取得
-js_now = streamlit_js_eval(js_expressions="new Date().toISOString()", key='js_full_date')
+# サーバーの2026/05/08を完全に無視するため、ブラウザの「生の日時」を直接取ります
+js_now = streamlit_js_eval(js_expressions="new Date().toISOString()", key='js_full_date_v3')
 
-# --- 💡 2. 位置情報の取得 ---
+# --- 💡 2. 高精度な位置情報の取得 ---
+st.sidebar.markdown("### 🛰️ 位置情報設定")
+if st.sidebar.button("現在地を更新"):
+    st.rerun()
+
+# 精度を高めるためのオプションを指定して現在地を取得
 loc = get_geolocation()
-default_start = ""
-if loc and 'coords' in loc:
-    default_start = f"{loc['coords']['latitude']}, {loc['coords']['longitude']}"
 
-# --- 💡 3. ブラウザの日付・時刻を解析 ---
-# 初期値設定（JavaScriptが読み込まれるまでの待機用）
+# --- 💡 3. 日付と時刻の確定ロジック ---
 if js_now:
-    # ブラウザのUTC時間を日本時間(+9時間)に変換
+    # ブラウザのUTCをJST(+9時間)に変換
     current_dt = datetime.fromisoformat(js_now.replace('Z', '+00:00')) + timedelta(hours=9)
-    init_date = current_dt.date()
-    init_time = current_dt.time()
+    # 確実に「今日」の日付と「今」の時刻をセット
+    default_date = current_dt.date()
+    default_time = current_dt.time()
 else:
-    # まだ取得できていない場合はNoneにして、5月8日が勝手に出るのを防ぐ
-    init_date = None
-    init_time = None
+    # JavaScriptがまだ反応していない場合は一時的にNone（空）にする
+    default_date = None
+    default_time = None
 
 # --- 💡 4. 入力画面 ---
 st.subheader("📍 ルート・コスト設定")
 
-start_point = st.text_input("出発地点", value=default_start, placeholder="現在地取得中...")
+# 現在地の反映
+start_val = ""
+if loc and 'coords' in loc:
+    start_val = f"{loc['coords']['latitude']}, {loc['coords']['longitude']}"
+else:
+    start_val = ""
+
+# 出発地点の入力（現在地が取れていれば自動入力）
+start_point = st.text_input("出発地点", value=start_val, placeholder="現在地取得中...（住所入力も可）")
+
+if not start_val:
+    st.caption("⚠️ 現在地が自動取得されない場合は、ブラウザの位置情報許可を確認するか、直接住所を入力してください。")
+
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
-with st.expander("🔄 経由地を設定する（最大3つ）"):
+with st.expander("🔄 経由地を設定する"):
     v1 = st.text_input("経由地1", key="v1")
     v2 = st.text_input("経由地2", key="v2")
-    v3 = st.text_input("経由地3", key="v3")
 
 st.write("🚗 車種とコストの設定")
 col_v1, col_v2 = st.columns(2)
@@ -51,28 +64,28 @@ with col_v1:
 with col_v2:
     time_value = st.number_input("時間価値 (円/1時間)", value=1500, step=100)
 
-# --- 🕒 日時設定 ---
-st.info("🕒 ブラウザの現在時刻を同期しています（取得まで数秒かかる場合があります）")
+# --- 🕒 日時設定（ブラウザ時刻を強制反映） ---
 c1, c2 = st.columns(2)
 with c1:
-    # JavaScriptから取れた日付を初期値に。取れていない間はカレンダーを空にする
-    dep_date = st.date_input("出発日", value=init_date)
+    dep_date = st.date_input("出発日", value=default_date)
 with c2:
-    dep_time = st.time_input("出発時刻", value=init_time)
+    dep_time = st.time_input("出発時刻", value=default_time)
+
+if not js_now:
+    st.warning("🕒 ブラウザの時刻を同期中... 数秒待っても日付が変わらない場合は、一度ページを更新してください。")
 
 if st.button("🚀 最適ルートを提案してもらう"):
     if not start_point:
         st.error("出発地点を入力してください。")
         st.stop()
     if dep_date is None:
-        st.error("出発日をカレンダーから選んでください。")
+        st.error("出発日が正しく設定されていません。カレンダーから選んでください。")
         st.stop()
 
-    vias = [v for v in [v1, v2, v3] if v]
+    vias = [v for v in [v1, v2] if v]
     via_info = f"（経由地：{' → '.join(vias)}）" if vias else ""
     dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
     
-    # AIへの指示
     prompt = f"""
     条件：出発{start_point}、目的地{destination}、日時{dt_str} {via_info}
     車種：{vehicle_type}
@@ -81,18 +94,18 @@ if st.button("🚀 最適ルートを提案してもらう"):
     ETCを使用する前提でコストやICを選択すること。
     高速道路料金の計算：
     - 100km以下：(24.6円 * Km + 150円) * 1.1
-    - 100km〜200km：走行距離当たり料金を25%割引
-    - 200km以上：走行距離当たり料金を30%割引
-    - 土日割引や夜間割引も考慮すること
-    - 軽自動車は、普通車の料金から20%割引すること
+    - 100km〜200kmの区間：距離比例料金を25%割引　全体の距離料金を割り引くわけではない
+    - 200km以上の区間：距離比例料金を30%割引
+    - 土日・夜間割引を考慮
+    - 軽自動車は、普通車の料金から20%割引
     
-    以下の3ルートを詳細に提案し、各ルートの「有料料金＋（時間×時間価値）」の合計コストを計算して比較表を出してください。
+    以下の3ルートを提案し、各ルートの「有料料金＋（時間×時間価値）」の合計コストを計算して比較表を出してください。
     
     1.【タイパ案】最短時間優先。高速フル活用。[RED]高速区間[/RED]
     2.【コスパ案】一般道優先。[BLUE]一般道区間[/BLUE]
-    3.【バランス案（地元推奨）】名阪国道、新4号バイパス等の「爆速無料バイパス」を優先。
-       有料は [RED]、無料の高規格道・一般道は [BLUE] で囲む。
-       高速道路と一般道路を比較し、ユーザーの時間価値より高速道路料金が高い場合は、一般道を使うルートを提案すること。
+    3.【バランス案（地元推奨）】爆速無料バイパス（名阪国道、新4号等）を優先。
+       有料は [RED]、無料の高規格道は [BLUE] で囲む。
+       高速代がユーザーの時間価値より高い場合は、一般道を提案。
     """
 
     with st.spinner("AIが最適なルートを計算中..."):
@@ -103,7 +116,7 @@ if st.button("🚀 最適ルートを提案してもらう"):
             res = model.generate_content(prompt)
             answer = res.text
             
-            # 色付け
+            # 色付け処理
             answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
             answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
             answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路|PA|SA)', r':red[\1]', answer)
