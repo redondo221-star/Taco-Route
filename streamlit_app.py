@@ -16,12 +16,36 @@ now_jst = datetime.utcnow() + timedelta(hours=9)
 st.title("🚗 Taco-Route")
 st.markdown("### 安定動作モード")
 
-# ---------- ① 出発日・出発時刻の初期化（最初の1回だけ） ----------
+# --- ① 初期値を最初の1回だけセット ---
 if "dep_date" not in st.session_state:
     st.session_state.dep_date = now_jst.date()
 
 if "dep_time" not in st.session_state:
     st.session_state.dep_time = now_jst.time()
+
+# --- ② ウィジェット（key を使うので自動で session_state に入る） ---
+st.write("🕒 出発日時を選択（タップして変更可能）")
+c1, c2 = st.columns(2)
+with c1:
+    st.date_input(
+        "出発日",
+        key="dep_date",
+        value=st.session_state.dep_date
+    )
+with c2:
+    st.time_input(
+        "出発時刻",
+        key="dep_time",
+        value=st.session_state.dep_time
+    )
+
+# ❌ これは禁止（今回のエラー原因）
+# st.session_state.dep_date = dep_date
+# st.session_state.dep_time = dep_time
+
+# --- ③ 使うときは session_state から読む ---
+dep_date = st.session_state.dep_date
+dep_time = st.session_state.dep_time
 
 # ---------- ② 入力フォーム ----------
 st.subheader("📍 ルート・コスト設定")
