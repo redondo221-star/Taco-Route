@@ -3,7 +3,6 @@ import google.generativeai as genai
 import re
 from datetime import datetime, timedelta
 
-# --- 1. API・モデル設定 (最も安定したモデルを指定) ---
 MODEL_NAME = 'gemini-pro'
 
 if "API_KEY" in st.secrets:
@@ -11,17 +10,22 @@ if "API_KEY" in st.secrets:
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
 
-# --- 2. 日本時間を計算 (サーバーの5月8日設定を無視して「今日」を出す) ---
-# サーバーがどの日付になっていても、UTCから日本時間を算出して初期値にします
+# --- 日本時間の「今」 ---
 now_jst = datetime.utcnow() + timedelta(hours=9)
 
 st.title("🚗 Taco-Route")
 st.markdown("### 安定動作モード")
 
-# --- 3. 入力フォーム ---
+# ---------- ① 出発日・出発時刻の初期化（最初の1回だけ） ----------
+if "dep_date" not in st.session_state:
+    st.session_state.dep_date = now_jst.date()
+
+if "dep_time" not in st.session_state:
+    st.session_state.dep_time = now_jst.time()
+
+# ---------- ② 入力フォーム ----------
 st.subheader("📍 ルート・コスト設定")
 
-# 位置情報：自動取得はフリーズの原因になるため、手入力を基本にします
 start_point = st.text_input("出発地点", placeholder="例：東京駅、または現在地の住所")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
@@ -36,23 +40,33 @@ with col1:
 with col2:
     time_val = st.number_input("時間価値 (円/h)", value=1500, step=100)
 
-# --- 🕒 出発日時の設定 (ここが手動で自由に変更できます) ---
+# ---------- ③ 出発日時（ここを session_state ベースにする） ----------
 st.write("🕒 出発日時を選択（タップして変更可能）")
 c1, c2 = st.columns(2)
 with c1:
-    # 初期値を「日本時間の今日」に固定。カレンダーから自由に変更できます
-    dep_date = st.date_input("出発日", value=now_jst.date())
+    dep_date = st.date_input(
+        "出発日",
+        key="dep_date",
+        value=st.session_state.dep_date
+    )
 with c2:
-    # 初期値を「日本時間の今」に固定。自由に変更できます
-    dep_time = st.time_input("出発時刻", value=now_jst.time())
+    dep_time = st.time_input(
+        "出発時刻",
+        key="dep_time",
+        value=st.session_state.dep_time
+    )
 
-# --- 4. AIルート提案の実行 ---
+# widget が更新した値を state に反映（※実際は自動でやってくれるが明示しておく）
+st.session_state.dep_date = dep_date
+st.session_state.dep_time = dep_time
+
+# ---------- ④ AIルート提案 ----------
 if st.button("🚀 最適ルートを提案してもらう"):
     if not start_point:
         st.error("出発地点を入力してください。")
     else:
-        dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
-        
+        dt_str = f"{st.session_state.dep_date.strftime('%Y/%m/%d')} {st.session_state.dep_time.strftime('%H:%M')}"
+
         prompt = f"""
         条件：出発{start_point}、目的地{destination}、日時{dt_str}
         経由地：{v1}, {v2}
@@ -72,8 +86,7 @@ if st.button("🚀 最適ルートを提案してもらう"):
                 model = genai.GenerativeModel(MODEL_NAME)
                 res = model.generate_content(prompt)
                 answer = res.text
-                
-                # 色付け
+
                 answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
                 answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
                 answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路)', r':red[\1]', answer)
