@@ -57,11 +57,46 @@ with c2:
         value=st.session_state.dep_time
     )
 
-# --- 6. session_state に反映（ウィジェットの値を採用） ---
+# --- 6. session_state に反映 ---
 st.session_state.dep_date = st.session_state.dep_date_input
 st.session_state.dep_time = st.session_state.dep_time_input
 
 # --- 7. AIルート提案 ---
 if st.button("🚀 最適ルートを提案してもらう"):
     if not start_point:
-        st.error("出発地点を
+        st.error("出発地点を入力してください。")
+    else:
+        dt_str = f"{st.session_state.dep_date.strftime('%Y/%m/%d')} {st.session_state.dep_time.strftime('%H:%M')}"
+
+        prompt = f"""
+        条件：出発{start_point}、目的地{destination}、日時{dt_str}
+        経由地：{v1}, {v2}
+        車種：{vehicle}
+        時間価値：{time_val}円/h
+        
+        【ルール】
+        1. 高速料金：100km以下：(24.6円*Km+150円)*1.1、軽自動車20%引。
+        2. 有料は[RED]、一般道は[BLUE]でルートを記載。
+        3. 総コスト（料金＋時間×価値）の比較表を出す。
+        
+        ルート案：①タイパ優先 ②コスパ優先 ③バランス優先
+        """
+
+        with st.spinner("AIが最適なルートを計算中..."):
+            try:
+                model = genai.GenerativeModel(MODEL_NAME)
+                res = model.generate_content(prompt)
+                answer = res.text
+
+                # 色付け
+                answer = answer.replace("[RED]", ":red[").replace("[/RED]", "]")
+                answer = answer.replace("[BLUE]", ":blue[").replace("[/BLUE]", "]")
+                answer = re.sub(r'(高速道路|IC|インター|JCT|有料道路)', r':red[\1]', answer)
+                answer = re.sub(r'(一般道|国道|バイパス)', r':blue[\1]', answer)
+
+                st.markdown("---")
+                st.markdown(f"### 🕒 {dt_str} 出発の提案")
+                st.markdown(answer)
+
+            except Exception as e:
+                st.error(f"エラーが発生しました。時間をおいて再度お試しください。({e})")
