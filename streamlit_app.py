@@ -2,7 +2,6 @@ import streamlit as st
 import google.generativeai as genai
 import re
 from datetime import datetime, timedelta
-import pandas as pd
 from streamlit_js_eval import get_geolocation, streamlit_js_eval
 
 # API設定
@@ -12,9 +11,9 @@ if "API_KEY" in st.secrets:
 st.set_page_config(page_title="Taco-Route", layout="centered")
 st.title("🚗 Taco-Route")
 
-# --- 💡 1. ブラウザの現在時刻をJavaScriptで取得 ---
-# これにより、サーバーの狂った時間ではなく、手元のスマホの時間が取れます
-js_time_raw = streamlit_js_eval(js_expressions="new Date().toISOString()", key='browser_time')
+# --- 💡 1. ブラウザの現在日時をJavaScriptで取得 ---
+# 確実に日付と時刻の両方を取得するため、ISO文字列を取得
+js_now = streamlit_js_eval(js_expressions="new Date().toISOString()", key='js_full_date')
 
 # --- 💡 2. 位置情報の取得 ---
 loc = get_geolocation()
@@ -22,7 +21,19 @@ default_start = ""
 if loc and 'coords' in loc:
     default_start = f"{loc['coords']['latitude']}, {loc['coords']['longitude']}"
 
-# --- 💡 3. 入力画面 ---
+# --- 💡 3. ブラウザの日付・時刻を解析 ---
+# 初期値設定（JavaScriptが読み込まれるまでの待機用）
+if js_now:
+    # ブラウザのUTC時間を日本時間(+9時間)に変換
+    current_dt = datetime.fromisoformat(js_now.replace('Z', '+00:00')) + timedelta(hours=9)
+    init_date = current_dt.date()
+    init_time = current_dt.time()
+else:
+    # まだ取得できていない場合はNoneにして、5月8日が勝手に出るのを防ぐ
+    init_date = None
+    init_time = None
+
+# --- 💡 4. 入力画面 ---
 st.subheader("📍 ルート・コスト設定")
 
 start_point = st.text_input("出発地点", value=default_start, placeholder="現在地取得中...")
@@ -40,33 +51,28 @@ with col_v1:
 with col_v2:
     time_value = st.number_input("時間価値 (円/1時間)", value=1500, step=100)
 
-# --- 💡 4. 日時設定（ブラウザ時刻を反映） ---
-# JSから取得した時間をPythonのdatetime型に変換
-now = datetime.now()
-if js_time_raw:
-    try:
-        # ISO形式を変換 (UTCなので日本時間に+9時間調整)
-        now = datetime.fromisoformat(js_time_raw.replace('Z', '+00:00')) + timedelta(hours=9)
-    except:
-        pass
-
-st.info(f"🕒 現在のブラウザ時刻を読み込みました")
+# --- 🕒 日時設定 ---
+st.info("🕒 ブラウザの現在時刻を同期しています（取得まで数秒かかる場合があります）")
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=now.date())
+    # JavaScriptから取れた日付を初期値に。取れていない間はカレンダーを空にする
+    dep_date = st.date_input("出発日", value=init_date)
 with c2:
-    dep_time = st.time_input("出発時刻", value=now.time())
+    dep_time = st.time_input("出発時刻", value=init_time)
 
 if st.button("🚀 最適ルートを提案してもらう"):
     if not start_point:
         st.error("出発地点を入力してください。")
+        st.stop()
+    if dep_date is None:
+        st.error("出発日をカレンダーから選んでください。")
         st.stop()
 
     vias = [v for v in [v1, v2, v3] if v]
     via_info = f"（経由地：{' → '.join(vias)}）" if vias else ""
     dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
     
-    # AIへの指示（ご指定のロジック）
+    # AIへの指示
     prompt = f"""
     条件：出発{start_point}、目的地{destination}、日時{dt_str} {via_info}
     車種：{vehicle_type}
@@ -75,8 +81,8 @@ if st.button("🚀 最適ルートを提案してもらう"):
     ETCを使用する前提でコストやICを選択すること。
     高速道路料金の計算：
     - 100km以下：(24.6円 * Km + 150円) * 1.1
-    - 100km〜200km：上記走行距離当たり料金を25%割引
-    - 200km以上：上記走行距離当たり料金を30%割引
+    - 100km〜200km：走行距離当たり料金を25%割引
+    - 200km以上：走行距離当たり料金を30%割引
     - 土日割引や夜間割引も考慮すること
     - 軽自動車は、普通車の料金から20%割引すること
     
@@ -91,10 +97,8 @@ if st.button("🚀 最適ルートを提案してもらう"):
 
     with st.spinner("AIが最適なルートを計算中..."):
         try:
-            # 利用可能なモデルを自動検出
             model_names = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             selected_model = next((m for m in model_names if 'gemini-1.5-flash' in m), model_names[0])
-            
             model = genai.GenerativeModel(selected_model)
             res = model.generate_content(prompt)
             answer = res.text
