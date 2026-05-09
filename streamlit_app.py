@@ -3,7 +3,7 @@ import google.generativeai as genai
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 
-# --- 1. API・モデル設定 ---
+# --- 1. AIモデル設定 (404対策済み) ---
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
@@ -17,99 +17,98 @@ def get_working_model():
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
 
-# --- 2. 【超重要】現在地を強制取得するJavaScript ---
-# この部品は、ボタンが押されるとスマホのGPSを呼び出し、
-# その結果をStreamlitの「出発地点」という箱に直接送り込みます。
-def location_fetcher():
+# --- 2. 日本時間の計算 ---
+now_jst = datetime.utcnow() + timedelta(hours=9)
+
+# --- 3. 現在地取得 JavaScript (URLパラメータ注入方式) ---
+# このJSは、取得した座標をブラウザのURLに「?geo=緯度,経度」としてセットします
+def location_script():
     components.html(
         """
-        <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; border: 1px solid #ddd;">
-            <p style="margin: 0 0 10px 0; font-weight: bold; font-family: sans-serif; font-size: 14px;">📍 現在地ボタン</p>
-            <button id="get-location" style="
-                width: 100%;
-                padding: 12px;
-                background-color: #ff4b4b;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                font-weight: bold;
-                cursor: pointer;
-            ">🛰️ 現在地を取得して入力する</button>
-            <p id="status" style="margin: 8px 0 0 0; font-size: 12px; font-family: sans-serif; color: #666;"></p>
-        </div>
-
         <script>
-            const btn = document.getElementById('get-location');
-            const status = document.getElementById('status');
-
-            btn.addEventListener('click', () => {
-                status.innerText = "GPS測定中...（許可ダイアログが出たら承認してください）";
-                if (!navigator.geolocation) {
-                    status.innerText = "お使いのブラウザはGPSに対応していません";
-                    return;
-                }
-
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        const lat = position.coords.latitude;
-                        const lon = position.coords.longitude;
-                        const coords = lat + "," + lon;
-                        
-                        // Streamlitの入力欄に値を渡す
-                        window.parent.postMessage({
-                            type: 'streamlit:set_widget_value',
-                            data: {value: coords, key: 'start_input'}
-                        }, '*');
-                        
-                        status.innerText = "取得成功！出発地点に入力しました。";
-                    },
-                    (error) => {
-                        status.innerText = "取得失敗: " + error.message + " (設定で位置情報を許可してください)";
-                    },
-                    { enableHighAccuracy: true }
-                );
-            });
+        const getLocation = () => {
+            if (!navigator.geolocation) {
+                alert("お使いのブラウザはGPSに対応していません");
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const coords = pos.coords.latitude + "," + pos.coords.longitude;
+                    const url = new URL(window.parent.location.href);
+                    url.searchParams.set("geo", coords);
+                    window.parent.location.href = url.href;
+                },
+                (err) => {
+                    alert("位置情報の取得に失敗しました: " + err.message + "\\nスマホの設定でブラウザの位置情報許可を確認してください。");
+                },
+                { enableHighAccuracy: true }
+            );
+        };
         </script>
+        <button onclick="getLocation()" style="
+            width: 100%; padding: 12px; background-color: #ff4b4b; color: white;
+            border: none; border-radius: 5px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        ">🛰️ 現在地を今すぐ取得する</button>
         """,
-        height=130,
+        height=70,
     )
 
-# --- 3. 画面構成 ---
+# --- 4. 画面表示 ---
 st.title("🚗 Taco-Route")
-now_jst = datetime.utcnow() + timedelta(hours=9)
 
 st.subheader("📍 ルート・コスト設定")
 
-# 現在地取得ボタンを配置（ここが重要！）
-location_fetcher()
+# URLから位置情報を読み取る
+query_params = st.query_params
+geo_from_url = query_params.get("geo", "")
 
-# 出発地点（key="start_input" にすることで上のJSから値を受け取れる）
-start_point = st.text_input("出発地点", key="start_input", placeholder="例：宇都宮駅、または上のボタンを使用")
+# 現在地取得ボタン
+location_script()
+
+# 出発地点の初期値設定
+start_point = st.text_input(
+    "出発地点", 
+    value=geo_from_url, 
+    placeholder="上のボタンを押すか、住所を入力"
+)
+
+if geo_from_url:
+    st.success(f"✅ 現在地を読み込みました ({geo_from_url})")
+else:
+    st.info("💡 「現在地ボタン」を押すと、ここに座標が自動入力されます。")
+
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
-with st.expander("🔄 経由地"):
+with st.expander("🔄 経由地設定"):
     v1 = st.text_input("経由地1", key="v1")
     v2 = st.text_input("経由地2", key="v2")
 
+st.write("🚗 車種とコストの設定")
 col1, col2 = st.columns(2)
 with col1:
     vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 with col2:
     time_val = st.number_input("時間価値 (円/h)", value=1500)
 
+st.write("🕒 出発日時")
 c1, c2 = st.columns(2)
 with c1:
     dep_date = st.date_input("出発日", value=now_jst.date())
 with c2:
     dep_time = st.time_input("出発時刻", value=now_jst.time())
 
-# --- 4. AI実行 ---
+# --- 5. AIルート提案 ---
 if st.button("🚀 最適ルートを提案してもらう"):
     if not start_point:
         st.error("出発地点を入力してください。")
     else:
         dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
-        prompt = f"出発地:{start_point}, 目的地:{destination}, 日時:{dt_str}, 車種:{vehicle}, 時間価値:{time_val}円/h ... (以下略)"
+        prompt = f"""
+        あなたは交通のプロです。出発:{start_point}から目的地:{destination}まで、
+        日時:{dt_str}、車種:{vehicle}、時間価値:{time_val}円/h でルートを3つ出してください。
+        有料道路料金、時間、ガソリン代、そして「時間価値を含めた総コスト」の比較表を最後に必ず付けてください。
+        """
 
         with st.spinner("AIがルートを計算中..."):
             try:
@@ -117,6 +116,5 @@ if st.button("🚀 最適ルートを提案してもらう"):
                 res = model.generate_content(prompt)
                 st.markdown("---")
                 st.markdown(res.text)
-                st.caption(f"使用モデル: {model.model_name}")
             except Exception as e:
-                st.error(f"エラー: {e}")
+                st.error(f"AIエラー: {e}")
