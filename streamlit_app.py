@@ -16,16 +16,17 @@ def get_working_model():
 
 st.set_page_config(page_title="Taco-Route Pro", layout="centered")
 
-# --- 2. セッション状態の初期化（時刻保持用） ---
+# --- 2. セッション状態の初期化 ---
 if "now" not in st.session_state:
     st.session_state.now = datetime.utcnow() + timedelta(hours=9)
 
 st.title("🚗 Taco-Route Professional")
-st.markdown("### 経由地・時刻・色分け完全対応モデル")
+st.markdown("### 熟練ドライバー仕様・最適化モデル")
 
 # --- 3. 入力フォーム ---
+# 【修正】目的地の初期値を空（""）に変更しました
 start_point = st.text_input("出発地点", placeholder="例：宇都宮駅")
-destination = st.text_input("目的地", value="ルートイン和泉岸和田")
+destination = st.text_input("目的地", placeholder="例：大阪駅")
 
 # 経由地の入力
 col_v1, col_v2 = st.columns(2)
@@ -59,42 +60,41 @@ if v2: via_points += f" および 「{v2}」"
 
 # --- 4. 実行ボタン ---
 if st.button("🚀 プロの推奨ルートを提案してもらう"):
-    if not start_point:
-        st.warning("出発地点を入力してください。")
+    if not start_point or not destination:
+        st.warning("出発地点と目的地を入力してください。")
     else:
-        # 強力な制約を加えたプロンプト
+        # Geminiへの指示
         prompt = f"""
-        あなたは日本中の道路を知り尽くした、絶対にミスをしないプロドライバーです。
-        ナビが無視しがちな「経由地」を必ず含めた、最高に賢いルートを3つ提案してください。
+        あなたは日本中の道路を熟知した「伝説のプロドライバー」です。
+        以下の条件をすべて満たすルートを3つ提案してください。
 
-        【絶対遵守の命令：経由地の通過】
-        入力された経由地 {via_points} は必ず通過するルートを作成してください。
-        これらを無視したルート提案は絶対に許されません。最短距離から外れても必ず立ち寄ってください。
+        【絶対命令：経由地の通過】
+        指定された経由地 {via_points} は必ず通過してください。これを無視したルートは不可です。
 
-        【絶対遵守の命令：出発日時】
+        【絶対命令：出発日時】
         出発日時：{full_dt_str}
-        ※5月16日は土曜日（休日）です。AIの内部時計ではなく、この日時と曜日を基準に交通状況と休日割引を計算してください。
+        ※曜日に基づくETC割引（休日割引・深夜割引）を正確に反映してください。
 
-        【絶対遵守の命令：表記ルール】
-        1. 高速道路・有料道路の区間・名称は必ず :red[赤文字] で記載。
+        【絶対命令：表記ルール】
+        1. 高速道路・有料道路（名称・区間）は必ず :red[赤文字] で記載。
            例：:red[東北道]、:red[加須IC〜外環浦和IC]
-        2. 一般道・バイパス・高規格道路の名称は必ず :blue[青文字] で記載。
+        2. 一般道・バイパス・高規格道路は必ず :blue[青文字] で記載。
            例：:blue[国道4号]、:blue[新4号バイパス]、:blue[名阪国道]
 
         【走行条件】
         出発：{start_point} / 到着：{destination} / 車種：{vehicle} / 時間価値：{time_val}円/h
 
-        【ベテランのこだわり】
-        - 「新4号」「名阪国道」等の無料爆速区間は、高速代わりの主役として活用。
-        - 関東圏は「外環道（大泉）」経由の効率性を重視。
-        - 案③「トータル最適」は、時間価値、料金、走りやすさのバランスが最も優れた「プロの結論」を提示。
+        【プロの視点】
+        - 信号のない「無料爆速区間」を優先。
+        - 圏央道より「外環道（大泉）」経由の効率性を厳しくチェック。
+        - 案③「トータル最適」は、時間価値、料金、走りやすさ（信号の少なさ）を総合判断した結論を提示。
 
         【出力構成】
         案①：最速タイパ / 案②：爆速コスパ / 案③：トータル最適
         最後に比較表（結果の数字のみ）を提示。
         """
 
-        with st.spinner(f"経由地を確認し、{full_dt_str} のルートを計算中..."):
+        with st.spinner(f"検証中: {full_dt_str}..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
@@ -102,6 +102,6 @@ if st.button("🚀 プロの推奨ルートを提案してもらう"):
                 st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
                 st.markdown(res.text)
                 if v1 or v2:
-                    st.success(f"✅ 経由地 {via_points} を含むルートを生成しました。")
+                    st.success(f"✅ 経由地 {via_points} を反映しました。")
             except Exception as e:
                 st.error(f"エラー: {e}")
