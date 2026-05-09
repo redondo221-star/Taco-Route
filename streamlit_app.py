@@ -1,9 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
 from datetime import datetime, timedelta
-import streamlit.components.v1 as components
 
-# --- 1. AIモデル設定 (404対策済み) ---
+# --- 1. AIモデル設定 (404対策済み・最速モデル) ---
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
@@ -19,95 +18,63 @@ st.set_page_config(page_title="Taco-Route", layout="centered")
 
 # --- 2. 日本時間の計算 ---
 now_jst = datetime.utcnow() + timedelta(hours=9)
+current_time_str = now_jst.strftime('%Y年%m月%d日 %H:%M')
 
-# --- 3. 現在地取得 JavaScript (URLパラメータ注入方式) ---
-# このJSは、取得した座標をブラウザのURLに「?geo=緯度,経度」としてセットします
-def location_script():
-    components.html(
-        """
-        <script>
-        const getLocation = () => {
-            if (!navigator.geolocation) {
-                alert("お使いのブラウザはGPSに対応していません");
-                return;
-            }
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    const coords = pos.coords.latitude + "," + pos.coords.longitude;
-                    const url = new URL(window.parent.location.href);
-                    url.searchParams.set("geo", coords);
-                    window.parent.location.href = url.href;
-                },
-                (err) => {
-                    alert("位置情報の取得に失敗しました: " + err.message + "\\nスマホの設定でブラウザの位置情報許可を確認してください。");
-                },
-                { enableHighAccuracy: true }
-            );
-        };
-        </script>
-        <button onclick="getLocation()" style="
-            width: 100%; padding: 12px; background-color: #ff4b4b; color: white;
-            border: none; border-radius: 5px; font-weight: bold; cursor: pointer;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        ">🛰️ 現在地を今すぐ取得する</button>
-        """,
-        height=70,
-    )
-
-# --- 4. 画面表示 ---
 st.title("🚗 Taco-Route")
+st.info(f"現在時刻: {current_time_str} (日本時間)")
 
-st.subheader("📍 ルート・コスト設定")
+# --- 3. 入力フォーム ---
+st.subheader("📍 ルート設定")
 
-# URLから位置情報を読み取る
-query_params = st.query_params
-geo_from_url = query_params.get("geo", "")
-
-# 現在地取得ボタン
-location_script()
-
-# 出発地点の初期値設定
-start_point = st.text_input(
-    "出発地点", 
-    value=geo_from_url, 
-    placeholder="上のボタンを押すか、住所を入力"
-)
-
-if geo_from_url:
-    st.success(f"✅ 現在地を読み込みました ({geo_from_url})")
-else:
-    st.info("💡 「現在地ボタン」を押すと、ここに座標が自動入力されます。")
-
+# GPS取得が動かないため、デフォルトで「現在地（宇都宮）」と入れておきます。
+# これにより、AIが文脈から場所を判断します。
+start_point = st.text_input("出発地点", value="現在地 (栃木県宇都宮市)", help="具体的な住所や駅名を入れるとより正確になります")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
 with st.expander("🔄 経由地設定"):
     v1 = st.text_input("経由地1", key="v1")
     v2 = st.text_input("経由地2", key="v2")
 
-st.write("🚗 車種とコストの設定")
+st.write("🚗 コスト設定")
 col1, col2 = st.columns(2)
 with col1:
     vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 with col2:
     time_val = st.number_input("時間価値 (円/h)", value=1500)
 
-st.write("🕒 出発日時")
+# 日時設定
 c1, c2 = st.columns(2)
 with c1:
     dep_date = st.date_input("出発日", value=now_jst.date())
 with c2:
     dep_time = st.time_input("出発時刻", value=now_jst.time())
 
-# --- 5. AIルート提案 ---
+# --- 4. AIルート提案 ---
 if st.button("🚀 最適ルートを提案してもらう"):
     if not start_point:
         st.error("出発地点を入力してください。")
     else:
         dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
+        
+        # プロンプトに「現在時刻」と「出発地」を詳しく含めることで、GPSの代わりをさせます
         prompt = f"""
-        あなたは交通のプロです。出発:{start_point}から目的地:{destination}まで、
-        日時:{dt_str}、車種:{vehicle}、時間価値:{time_val}円/h でルートを3つ出してください。
-        有料道路料金、時間、ガソリン代、そして「時間価値を含めた総コスト」の比較表を最後に必ず付けてください。
+        あなたは交通・物流の専門家です。
+        現在、日本時間は {current_time_str} です。
+        この時間情報を踏まえ、以下の条件で最適なルートを3つ提案してください。
+
+        【条件】
+        出発地：{start_point}
+        目的地：{destination}
+        経由地：{v1 if v1 else "なし"}, {v2 if v2 else "なし"}
+        出発希望日時：{dt_str}
+        車種：{vehicle}
+        ユーザーの時間価値：{time_val}円/h
+
+        【必須ルール】
+        1. 料金計算：100km以下は (24.6円*Km+150円)*1.1。軽自動車は20%引。
+        2. 出発地が「現在地」とある場合は、宇都宮付近を起点として計算してください。
+        3. 有料道路は :red[○○IC〜××IC]、一般道は :blue[国道○号] と表記。
+        4. 最後に比較表（時間、高速代、ガソリン代、総コスト）を出してください。
         """
 
         with st.spinner("AIがルートを計算中..."):
@@ -116,5 +83,6 @@ if st.button("🚀 最適ルートを提案してもらう"):
                 res = model.generate_content(prompt)
                 st.markdown("---")
                 st.markdown(res.text)
+                st.success("AIが現在時刻と場所を考慮してルートを生成しました。")
             except Exception as e:
                 st.error(f"AIエラー: {e}")
