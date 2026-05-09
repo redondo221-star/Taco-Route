@@ -16,8 +16,10 @@ def get_working_model():
 
 st.set_page_config(page_title="Taco-Route Pro", layout="centered")
 
-# --- 2. 日本時間計算（初期値用） ---
-now_jst = datetime.utcnow() + timedelta(hours=9)
+# --- 2. 時刻・日付の初期値設定 ---
+# 実行時の日本時間を基準にする
+if "now" not in st.session_state:
+    st.session_state.now = datetime.utcnow() + timedelta(hours=9)
 
 st.title("🚗 Taco-Route Professional")
 
@@ -32,62 +34,62 @@ with st.expander("🔄 車両・コスト詳細設定"):
     with col1:
         vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
     with col2:
-        # 100円刻みに修正
+        # 100円刻み
         time_val = st.number_input("時間価値 (円/h)", value=1500, step=100)
 
 st.write("🕒 出発日時設定")
 c1, c2 = st.columns(2)
 with c1:
-    input_date = st.date_input("出発日", value=now_jst.date())
+    # keyを設定してセッションに保存
+    input_date = st.date_input("出発日", value=st.session_state.now.date(), key="d_input")
 with c2:
-    # ユーザーが変更した時刻を直接取得
-    input_time = st.time_input("出発時刻", value=now_jst.time())
+    # keyを設定してセッションに保存（これで上書きが保持される）
+    input_time = st.time_input("出発時刻", value=st.session_state.now.time(), key="t_input")
 
-# Python側で日時と曜日を確定（AIの勘違いを防止）
-departure_dt = datetime.combine(input_date, input_time)
+# 出発日時を一つの文字列に確定させる
 weeks = ["月", "火", "水", "木", "金", "土", "日"]
-day_of_week = weeks[departure_dt.weekday()]
-dt_display = departure_dt.strftime('%Y年%m月%d日') + f"({day_of_week}) " + departure_dt.strftime('%H:%M')
+day_of_week = weeks[input_date.weekday()]
+full_dt_str = f"{input_date.strftime('%Y年%m月%d日')}({day_of_week}) {input_time.strftime('%H:%M')}"
 
 # --- 4. 実行ボタン ---
-if st.button("🚀 プロの最適ルートを提案してもらう"):
+if st.button("🚀 プロの推奨ルートを提案してもらう"):
     if not start_point:
         st.warning("出発地点を入力してください。")
     else:
-        # AIへの指示（文字色ルールの徹底）
+        # AIへの指示（色分けと日時上書きを徹底）
         prompt = f"""
-        あなたは日本中の道路を熟知したベテランドライバーです。
-        以下の「指定日時」を絶対基準として、プロの視点でルート提案を行ってください。
+        あなたは日本全国の道路を知り尽くした「伝説のプロドライバー」です。
+        ナビ通りではなく、走りやすさとコストを両立したルートを提案してください。
 
-        【絶対厳守：出発日時】
-        {dt_display} 出発
-        （※5月16日は土曜日です。休日割引を考慮してください）
+        【重要：シミュレーション日時】
+        出発日時：{full_dt_str}
+        ※5月16日は土曜日です。AIの内部時計ではなく、この日時と曜日を絶対として交通状況・ETC割引を計算してください。
 
-        【絶対厳守：表示ルール】
-        1. 高速道路・有料道路の名称や区間は、すべて「赤文字」で表記してください。
-           例：:red[東北自動車道]、:red[大泉IC〜練馬IC]
-        2. 一般道・高規格道路・バイパスの名称は、すべて「青文字」で表記してください。
+        【重要：表記ルール】
+        1. 高速道路・有料道路（名称・区間）は必ず :red[赤文字] で記載。
+           例：:red[東北道]、:red[加須IC〜外環浦和IC]
+        2. 一般道・バイパス・高規格道路は必ず :blue[青文字] で記載。
            例：:blue[国道4号]、:blue[新4号バイパス]、:blue[名阪国道]
 
         【走行条件】
-        出発地：{start_point} / 目的地：{destination} / 車種：{vehicle} / 時間価値：{time_val}円/h
+        出発：{start_point} / 到着：{destination} / 車種：{vehicle} / 時間価値：{time_val}円/h
 
-        【ベテランのルート選定】
-        - 信号のない「無料爆速道路（新4号、名阪国道等）」を高速の代替として積極活用。
-        - 圏央道より「外環道」の方が効率的な場合は迷わず選択。
-        - 案③の「トータル最適」は、時間価値を含めた総コストが最も低く、走りやすいプロ推奨ルートを提示。
+        【ベテランのこだわり】
+        - 「新4号」「名阪国道」等の無料爆速区間は高速代わりの主役として扱う。
+        - 関東から西へ向かう際、圏央道より「外環道（大泉）」経由が速い場合は迷わず選択。
+        - 案③の「トータル最適」は、渋滞リスク・走りやすさ・コストの全てが最高の、プロが選ぶ結論ルートにすること。
 
         【出力構成】
-        案①【最速タイパ】、案②【爆速コスパ】、案③【トータル最適】
-        最後に、比較表（数式なし、結果のみ）を出してください。
+        案①：最速タイパ / 案②：爆速コスパ / 案③：トータル最適
+        最後に比較表（結果の数字のみ）を提示。
         """
 
-        with st.spinner(f"検証中: {dt_display}..."):
+        with st.spinner(f"検証中: {full_dt_str}..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 st.markdown("---")
-                st.markdown(f"## 🏁 {dt_display} 出発の提案結果")
+                st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
                 st.markdown(res.text)
             except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+                st.error(f"エラー: {e}")
