@@ -1,125 +1,122 @@
 import streamlit as st
 import google.generativeai as genai
-import re
 from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 
-# --- 1. API・モデル設定 (404対策済) ---
+# --- 1. API・モデル設定 ---
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
 def get_working_model():
     try:
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        target = next((m for m in models if 'gemini-1.5-flash' in m), 
-                 next((m for m in models if 'gemini-1.5-pro' in m), models[0]))
+        target = next((m for m in models if 'gemini-1.5-flash' in m), models[0])
         return genai.GenerativeModel(target)
     except:
         return genai.GenerativeModel('models/gemini-1.5-flash')
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
 
-# --- 2. 現在地取得用のJavaScriptコンポーネント ---
-# ボタンを押すとブラウザのGPSを呼び出し、StreamlitのURLパラメータに値を渡す仕組み
-def location_button():
-    st.markdown("### 📍 位置情報の取得")
+# --- 2. 【超重要】現在地を強制取得するJavaScript ---
+# この部品は、ボタンが押されるとスマホのGPSを呼び出し、
+# その結果をStreamlitの「出発地点」という箱に直接送り込みます。
+def location_fetcher():
     components.html(
         """
-        <button id="loc_btn" style="
-            background-color: #ff4b4b; 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            border-radius: 5px; 
-            cursor: pointer;
-            width: 100%;
-            font-weight: bold;
-        ">🛰️ 現在地を読み込む</button>
-        <p id="status" style="font-size: 12px; color: gray;"></p>
+        <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; border: 1px solid #ddd;">
+            <p style="margin: 0 0 10px 0; font-weight: bold; font-family: sans-serif; font-size: 14px;">📍 現在地ボタン</p>
+            <button id="get-location" style="
+                width: 100%;
+                padding: 12px;
+                background-color: #ff4b4b;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                cursor: pointer;
+            ">🛰️ 現在地を取得して入力する</button>
+            <p id="status" style="margin: 8px 0 0 0; font-size: 12px; font-family: sans-serif; color: #666;"></p>
+        </div>
+
         <script>
-            const btn = document.getElementById('loc_btn');
+            const btn = document.getElementById('get-location');
+            const status = document.getElementById('status');
+
             btn.addEventListener('click', () => {
-                document.getElementById('status').innerText = "取得中...";
+                status.innerText = "GPS測定中...（許可ダイアログが出たら承認してください）";
+                if (!navigator.geolocation) {
+                    status.innerText = "お使いのブラウザはGPSに対応していません";
+                    return;
+                }
+
                 navigator.geolocation.getCurrentPosition(
-                    (pos) => {
-                        const lat = pos.coords.latitude;
-                        const lon = pos.coords.longitude;
-                        // 親ウィンドウ（Streamlit）に値を送る
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lon = position.coords.longitude;
+                        const coords = lat + "," + lon;
+                        
+                        // Streamlitの入力欄に値を渡す
                         window.parent.postMessage({
                             type: 'streamlit:set_widget_value',
-                            data: {value: lat + "," + lon, key: 'geo_input'}
+                            data: {value: coords, key: 'start_input'}
                         }, '*');
-                        document.getElementById('status').innerText = "取得完了！";
+                        
+                        status.innerText = "取得成功！出発地点に入力しました。";
                     },
-                    (err) => {
-                        document.getElementById('status').innerText = "エラー: " + err.message;
-                    }
+                    (error) => {
+                        status.innerText = "取得失敗: " + error.message + " (設定で位置情報を許可してください)";
+                    },
+                    { enableHighAccuracy: true }
                 );
             });
         </script>
         """,
-        height=100,
+        height=130,
     )
 
-# --- 3. メイン画面 ---
+# --- 3. 画面構成 ---
 st.title("🚗 Taco-Route")
-
-# 日本時間の計算
 now_jst = datetime.utcnow() + timedelta(hours=9)
 
 st.subheader("📍 ルート・コスト設定")
 
-# 現在地取得ボタンを配置
-location_button()
+# 現在地取得ボタンを配置（ここが重要！）
+location_fetcher()
 
-# 出発地点の入力欄（key='geo_input' で上のJSと連動）
-start_point = st.text_input("出発地点", key="geo_input", placeholder="例：東京駅、または上のボタンで取得")
+# 出発地点（key="start_input" にすることで上のJSから値を受け取れる）
+start_point = st.text_input("出発地点", key="start_input", placeholder="例：宇都宮駅、または上のボタンを使用")
 destination = st.text_input("目的地", value="ルートイン和泉岸和田")
 
-with st.expander("🔄 経由地設定"):
+with st.expander("🔄 経由地"):
     v1 = st.text_input("経由地1", key="v1")
     v2 = st.text_input("経由地2", key="v2")
 
-st.write("🚗 車種とコストの設定")
 col1, col2 = st.columns(2)
 with col1:
     vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 with col2:
     time_val = st.number_input("時間価値 (円/h)", value=1500)
 
-st.write("🕒 出発日時")
 c1, c2 = st.columns(2)
 with c1:
     dep_date = st.date_input("出発日", value=now_jst.date())
 with c2:
     dep_time = st.time_input("出発時刻", value=now_jst.time())
 
-# --- 4. AIルート提案の実行 ---
+# --- 4. AI実行 ---
 if st.button("🚀 最適ルートを提案してもらう"):
     if not start_point:
         st.error("出発地点を入力してください。")
     else:
         dt_str = f"{dep_date.strftime('%Y/%m/%d')} {dep_time.strftime('%H:%M')}"
-        prompt = f"""
-        条件：出発{start_point}、目的地{destination}、日時{dt_str}
-        経由地：{v1}, {v2}
-        車種：{vehicle}
-        時間価値：{time_val}円/h
-        
-        【指示】
-        1. 高速料金：100km以下は (24.6円*Km+150円)*1.1、軽自動車20%引。
-        2. 有料区間は :red[○○IC〜××IC]、一般道は :blue[国道○号] のように記載。
-        3. 最後に「時間・高速代・ガソリン代・時間価値コスト」の比較表を出す。
-        
-        提案：①タイパ案 ②コスパ案 ③バランス案
-        """
+        prompt = f"出発地:{start_point}, 目的地:{destination}, 日時:{dt_str}, 車種:{vehicle}, 時間価値:{time_val}円/h ... (以下略)"
 
-        with st.spinner("AI計算中..."):
+        with st.spinner("AIがルートを計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 st.markdown("---")
-                st.markdown(res.text.replace("[RED]", ":red[").replace("[/RED]", "]").replace("[BLUE]", ":blue[").replace("[/BLUE]", "]"))
-                st.caption(f"powered by {model.model_name}")
+                st.markdown(res.text)
+                st.caption(f"使用モデル: {model.model_name}")
             except Exception as e:
-                st.error(f"AIエラー: {e}")
+                st.error(f"エラー: {e}")
