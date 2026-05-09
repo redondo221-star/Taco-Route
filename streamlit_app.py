@@ -20,7 +20,6 @@ st.set_page_config(page_title="Taco-Route Pro", layout="centered")
 now_jst = datetime.utcnow() + timedelta(hours=9)
 
 st.title("🚗 Taco-Route Professional")
-st.markdown("### 熟練ドライバー仕様・最適化モデル")
 
 # --- 3. 入力フォーム ---
 start_point = st.text_input("出発地点", placeholder="例：宇都宮駅")
@@ -33,61 +32,62 @@ with st.expander("🔄 車両・コスト詳細設定"):
     with col1:
         vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
     with col2:
-        # 【修正】100円刻みに変更
+        # 100円刻みに修正
         time_val = st.number_input("時間価値 (円/h)", value=1500, step=100)
 
 st.write("🕒 出発日時設定")
 c1, c2 = st.columns(2)
 with c1:
-    dep_date = st.date_input("出発日", value=now_jst.date())
+    input_date = st.date_input("出発日", value=now_jst.date())
 with c2:
-    # 【修正】時刻が確実に変数 dep_time に格納されるように構成
-    dep_time = st.time_input("出発時刻", value=now_jst.time())
+    # ユーザーが変更した時刻を直接取得
+    input_time = st.time_input("出発時刻", value=now_jst.time())
 
-# --- 4. 曜日計算とプロンプト生成 ---
-# AIの曜日勘違いを防ぐため、Python側で曜日を確定させる
+# Python側で日時と曜日を確定（AIの勘違いを防止）
+departure_dt = datetime.combine(input_date, input_time)
 weeks = ["月", "火", "水", "木", "金", "土", "日"]
-day_of_week = weeks[dep_date.weekday()]
-full_date_str = f"{dep_date.strftime('%Y年%m月%d日')}({day_of_week})"
-time_str = dep_time.strftime('%H:%M')
+day_of_week = weeks[departure_dt.weekday()]
+dt_display = departure_dt.strftime('%Y年%m月%d日') + f"({day_of_week}) " + departure_dt.strftime('%H:%M')
 
+# --- 4. 実行ボタン ---
 if st.button("🚀 プロの最適ルートを提案してもらう"):
     if not start_point:
         st.warning("出発地点を入力してください。")
     else:
-        # 【修正】ユーザーが選択した日付と時刻をプロンプトに厳格に反映
+        # AIへの指示（文字色ルールの徹底）
         prompt = f"""
-        あなたは日本中の道を走り尽くしたベテランドライバーです。
-        以下の「指定された日時」の交通状況を考慮して、最適なルートを提案してください。
+        あなたは日本中の道路を熟知したベテランドライバーです。
+        以下の「指定日時」を絶対基準として、プロの視点でルート提案を行ってください。
 
-        【厳守する出発日時】
-        {full_date_str} {time_str} 出発
-        （※AIの内部カレンダーではなく、この日付と曜日を正としてください）
+        【絶対厳守：出発日時】
+        {dt_display} 出発
+        （※5月16日は土曜日です。休日割引を考慮してください）
+
+        【絶対厳守：表示ルール】
+        1. 高速道路・有料道路の名称や区間は、すべて「赤文字」で表記してください。
+           例：:red[東北自動車道]、:red[大泉IC〜練馬IC]
+        2. 一般道・高規格道路・バイパスの名称は、すべて「青文字」で表記してください。
+           例：:blue[国道4号]、:blue[新4号バイパス]、:blue[名阪国道]
 
         【走行条件】
-        出発地：{start_point} / 目的地：{destination} / 経由地：{v1}, {v2}
-        車種：{vehicle} / 時間価値：{time_val}円/h
+        出発地：{start_point} / 目的地：{destination} / 車種：{vehicle} / 時間価値：{time_val}円/h
 
-        【ベテランの鉄則】
-        1. 信号回避：新4号、名阪国道など「無料爆速区間」を高速の代替として優先活用すること。
-        2. 都市部ショートカット：東北道から大泉・関西方面へ抜ける際、圏央道より「外環道経由」が速くて安い場合は迷わず選択すること。
-        3. 実戦的最適化：案③「トータル最適」は、渋滞リスクが低く、定速走行が可能で、時間価値を含めた総コストが最小となる「プロが選ぶ勝利ルート」にすること。
+        【ベテランのルート選定】
+        - 信号のない「無料爆速道路（新4号、名阪国道等）」を高速の代替として積極活用。
+        - 圏央道より「外環道」の方が効率的な場合は迷わず選択。
+        - 案③の「トータル最適」は、時間価値を含めた総コストが最も低く、走りやすいプロ推奨ルートを提示。
 
-        【出力】
-        - 案①：【最速タイパ】有料道路フル活用
-        - 案②：【爆速コスパ】無料高規格道活用で高速代激減
-        - 案③：【トータル最適】時間価値を考慮した「プロの推奨」
-
-        ※計算式は出さず、比較表と「なぜこのルートが賢いのか」の解説を重視してください。
+        【出力構成】
+        案①【最速タイパ】、案②【爆速コスパ】、案③【トータル最適】
+        最後に、比較表（数式なし、結果のみ）を出してください。
         """
 
-        with st.spinner(f"{full_date_str} {time_str} の最適ルートを計算中..."):
+        with st.spinner(f"検証中: {dt_display}..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 st.markdown("---")
-                st.markdown(f"### 🕒 {full_date_str} {time_str} 出発の提案")
+                st.markdown(f"## 🏁 {dt_display} 出発の提案結果")
                 st.markdown(res.text)
-                st.info("💡 曜日や時間帯によるETC割引（深夜・休日）を考慮した提案です。")
             except Exception as e:
-                st.error(f"AIエラー: {e}")
+                st.error(f"エラーが発生しました: {e}")
