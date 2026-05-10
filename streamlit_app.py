@@ -1,58 +1,50 @@
 import streamlit as st
 import google.generativeai as genai
 from datetime import datetime, timedelta
+import urllib.parse
+import re
 
 # --- 1. API・モデル設定 ---
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
 def get_working_model():
-    """
-    404エラーを回避するため、利用可能なモデルを動的に取得・設定する
-    """
     try:
-        # 利用可能なモデルリストを取得
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 1.5-flashを探す（models/gemini-1.5-flash の形式で取得される）
         target_model = next((m for m in available_models if 'gemini-1.5-flash' in m), None)
-        
         if not target_model:
-            # flashがなければproを探す
             target_model = next((m for m in available_models if 'gemini-1.5-pro' in m), available_models[0])
-            
         return genai.GenerativeModel(target_model)
     except Exception:
-        # 万が一リスト取得に失敗した場合は、標準的な名称を直接指定
         return genai.GenerativeModel('gemini-1.5-flash')
 
-st.set_page_config(page_title="Taco-Route Pro", layout="centered")
+st.set_page_config(page_title="Taco-Route Pro", layout="wide") # 表を見やすくするためwideに設定
 
 # --- 2. セッション状態の初期化 ---
 if "now" not in st.session_state:
-    st.session_state.now = datetime.utcnow() + timedelta(hours=9)
+    st.session_state.now = datetime.now()
 
 st.title("🚗 Taco-Route Professional")
 st.markdown("### 最速基準・コスト削減分析モデル")
 
 # --- 3. 入力フォーム ---
-start_point = st.text_input("出発地点", placeholder="例：宇都宮駅")
-destination = st.text_input("目的地", placeholder="例：大阪駅")
+with st.sidebar:
+    st.header("📍 目的地設定")
+    start_point = st.text_input("出発地点", value="宇都宮駅")
+    destination = st.text_input("目的地", value="大阪駅")
 
-col_v1, col_v2 = st.columns(2)
-with col_v1:
-    v1 = st.text_input("経由地1（必須通過）", placeholder="例：佐野SA")
-with col_v2:
-    v2 = st.text_input("経由地2（任意）", placeholder="")
+    col_v1, col_v2 = st.columns(2)
+    with col_v1:
+        v1 = st.text_input("経由地1(必須)", placeholder="例：佐野SA")
+    with col_v2:
+        v2 = st.text_input("経由地2(任意)", placeholder="")
 
-with st.expander("🔄 車両設定"):
     vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 
-st.write("🕒 出発日時設定")
-c1, c2 = st.columns(2)
-with c1:
+    st.markdown("---")
+    st.write("🕒 出発日時設定")
+    # keyを設定することで値の保持を確実にします
     input_date = st.date_input("出発日", value=st.session_state.now.date(), key="d_input")
-with c2:
     input_time = st.time_input("出発時刻", value=st.session_state.now.time(), key="t_input")
 
 # 出発日時と曜日の計算
@@ -69,43 +61,73 @@ if st.button("🚀 プロの推奨ルートを提案してもらう"):
         via_points = f"「{v1}」" if v1 else ""
         if v2: via_points += f" および 「{v2}」"
 
-        # Geminiへの詳細な指示
+        # Geminiへの指示：以前の表形式を維持しつつ、MAP用地点データを最後に出力させる
         prompt = f"""
         あなたは日本の道路事情（バイパス、高速、ETC割引）に精通したプロドライバーです。
         以下の条件で3つのルート（案①最速、案②爆速コスパ、案③トータル最適）を提案してください。
 
         【絶対命令：条件】
         - 経由地 {via_points} は必ず通過すること。
-        - 出発日時：{full_dt_str}（曜日・時間帯による割引と渋滞を考慮）。
-        - 表記：高速道路は :red[赤文字]、一般道・バイパスは :blue[青文字]。
+        - 出発日時：{full_dt_str}（割引と渋滞を考慮）。
+        - 表記ルール：高速道路・有料道路名は :red[== 道路名 (〇〇IC〜××IC) ==] のように赤文字で。
+        - 表記ルール：一般道・バイパス名は :blue[-- 道路名 --] のように青文字で。
+        - 各案の解説には必ず「所要時間」と「高速料金」を含めること。
 
-        【重要：比較表の作成ルール】
-        最後に必ず以下の項目で比較表を作成してください。
-        「案①最速タイパ」の結果を基準(0)とし、案②・案③との「差分」を計算して表示してください。
+        【重要：比較表の作成】
+        各案の詳細解説のあと、必ず Markdown形式で比較表を作成してください。
+        項目：案名 | 距離(km) | 所要時間 | 高速料金(円) | 距離差 | 時間差(分) | 料金差(円) | 1時間あたりの削減額
 
-        表の構成：
-        - 案名（案①最速、案②爆速コスパ、案③トータル最適）
-        - 走行距離 (km)
-        - 所要時間 (h:mm)
-        - 高速料金 (円)
-        - 基準比：距離差 (km)
-        - 基準比：時間差 (分) ※案①より何分遅いか
-        - 基準比：料金差 (円) ※案①より何円安いか
-        - 1時間あたりの削減額 (円/h) 
-          ※計算式：料金差 ÷ (時間差/60)。「時間を犠牲にして、1時間あたりいくら浮かせられたか」の指標。
+        【地図表示用データ】
+        回答の最末尾に、Googleマップ生成用の地点リストを以下の形式で出力してください。
+        「行ってこい」を防ぐため、地点は [出発地, 入口IC名, 出口IC名, 目的地] のように最小限かつ順番通りに。
+        
+        DATA_START
+        ROUTE1:{start_point},[入口IC],[出口IC],{destination}
+        ROUTE2:{start_point},[主要バイパス],[入口IC],[出口IC],{destination}
+        ROUTE3:{start_point},[主要地点],{destination}
+        DATA_END
 
-        【走行条件】
         出発：{start_point} / 到着：{destination} / 車種：{vehicle}
         """
 
-        with st.spinner(f"モデルを確認し、{full_dt_str} のルートを計算中..."):
+        with st.spinner(f"{full_dt_str} の最適ルートを解析中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
-                st.markdown("---")
-                st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
-                st.markdown(res.text)
-                if v1 or v2:
-                    st.info(f"💡 経由地 {via_points} を経由するルートを表示しています。")
+                
+                if res.text:
+                    full_text = res.text
+                    # 表示用（地点データは隠す）
+                    display_content = full_text.split("DATA_START")[0]
+                    
+                    st.markdown("---")
+                    st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
+                    st.markdown(display_content)
+                    
+                    # --- MAPボタンの生成処理 ---
+                    if "DATA_START" in full_text:
+                        st.markdown("---")
+                        st.subheader("📍 Googleマップでルートを確認")
+                        data_part = full_text.split("DATA_START")[1].split("DATA_END")[0]
+                        
+                        cols = st.columns(3)
+                        btn_labels = ["①最速ルート", "②爆速コスパ", "③トータル最適"]
+                        
+                        for i, label in enumerate(btn_labels):
+                            # ROUTE1:地点A,地点B... を探す
+                            match = re.search(f"ROUTE{i+1}:(.*)", data_part)
+                            if match:
+                                pts = [p.strip() for p in match.group(1).split(",") if p.strip()]
+                                # URLエンコードしてGoogleマップURLを作成
+                                # 最初の地点と最後の地点は確実に入力値を使う
+                                final_pts = [start_point] + pts[1:-1] + [destination]
+                                encoded_path = "/".join([urllib.parse.quote(p) for p in final_pts])
+                                gmap_url = f"https://www.google.com/maps/dir/{encoded_path}"
+                                
+                                with cols[i]:
+                                    st.link_button(f"🗺️ {label}を表示", gmap_url, use_container_width=True)
+
+                    if v1 or v2:
+                        st.info(f"💡 経由地 {via_points} を考慮した分析結果です。")
             except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+                st.error(f"解析中にエラーが発生しました。時間を置いて再度お試しください。: {e}")
