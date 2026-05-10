@@ -32,7 +32,7 @@ st.set_page_config(page_title="Taco-Route Pro", layout="centered")
 if "now" not in st.session_state:
     st.session_state.now = datetime.utcnow() + timedelta(hours=9)
 
-st.title("🚗 Taco-Route Professional")
+st.title("🚗 Taco-Route ")
 st.markdown("### 最速基準・コスト削減分析モデル")
 
 # --- 3. 入力フォーム ---
