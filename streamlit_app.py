@@ -1,7 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
-from datetime import datetime, timedelta
+from datetime import datetime
 import urllib.parse
 import re
 
@@ -36,27 +36,26 @@ with col_v1:
 with col_v2:
     v2 = st.text_input("任意経由地2", placeholder="")
 
-# --- 出発日時の設定（修正：セッション状態に依存せず変更可能に） ---
+# --- 出発日時の設定（確実な時間取得のための修正） ---
 st.markdown("🕒 **出発日時・詳細設定**")
 col_d, col_t = st.columns(2)
 with col_d:
-    input_date = st.date_input("出発日", value=datetime.now().date())
+    input_date = st.date_input("出発日", value=datetime.now().date(), key="date_val")
 with col_t:
-    # time_inputの戻り値をそのまま使うよう修正
-    input_time = st.time_input("出発時刻", value=datetime.now().time())
+    input_time = st.time_input("出発時刻", value=datetime.now().time(), key="time_val")
 
 vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 
+# 日時を統合
 departure_dt = datetime.combine(input_date, input_time)
 full_dt_str = departure_dt.strftime('%Y年%m月%d日 %H:%M')
 
 # --- 強制色付け関数 ---
 def apply_custom_colors(text):
-    # AIが書き忘れても、特定のキーワードが含まれていれば色を付ける
-    # 有料・高速（赤）
-    text = re.sub(r'(高速道路|有料道路|IC|JCT|自動車道|パーキング|サービスエリア|==.*?==)', r':red[\1]', text)
+    # 高速・有料（赤）
+    text = re.sub(r'(高速道路|有料道路|IC|JCT|自動車道|パーキング|==.*?==)', r':red[\1]', text)
     # 一般道・バイパス（青）
-    text = re.sub(r'(一般道|国道|県道|バイパス|道なり|--.*?--)', r':blue[\1]', text)
+    text = re.sub(r'(一般道|国道|県道|バイパス|--.*?--)', r':blue[\1]', text)
     return text
 
 # --- 3. 実行処理 ---
@@ -64,24 +63,28 @@ if st.button("🚀 3つのルートを比較・提案してもらう"):
     if not start_point or not destination:
         st.warning("出発地と目的地を入力してください。")
     else:
+        # プロンプト：以前の比較表形式（差分あり）を徹底指示
         prompt = f"""
         あなたは日本のプロドライバーです。以下の条件で3つのルートを提案してください。
         出発：{start_point} / 目的地：{destination} / 経由：{v1}, {v2} / 車種：{vehicle} / 出発日時：{full_dt_str}
 
-        【回答構成ルール】
-        1. 冒頭に必ず【比較表】を作成。列は「案名」「距離(km)」「時間」「料金(円)」「案①との差(時間)」「案①との差(料金)」にすること。
-        2. 各案のルート説明では、高速区間を「== 道路名 ==」、一般道区間を「-- 道路名 --」と表記すること。
+        【回答ルール】
+        1. 冒頭に必ず【比較表】を作成してください。
+           列構成：案名 | 距離(km) | 時間 | 料金(円) | 案①との時間差 | 案①との料金差
+        2. ルート解説での色分け：
+           - 有料・高速区間は「== 道路名 (〇〇IC～××IC) ==」と表記。
+           - 一般道・バイパス区間は「-- 道路名 --」と表記。
         3. 案①最速、案②爆速コスパ（下道バイパス活用）、案③トータル最適の3案を詳しく解説。
-        4. 最後にMAP再現用の地点リストを出力。
+        4. 最後にMAP再現用の地点リストを出力（必ずIC入口・IC出口・バイパス名を含める）。
 
         DATA_START
-        ROUTE1_POINTS:{start_point},[IC名1],[IC名2],{destination}
-        ROUTE2_POINTS:{start_point},[バイパス名],[IC名],[バイパス名],{destination}
+        ROUTE1_POINTS:{start_point},[IC入口名],[IC出口名],{destination}
+        ROUTE2_POINTS:{start_point},[バイパス入口],[IC入口],[IC出口],[バイパス出口],{destination}
         ROUTE3_POINTS:{start_point},[主要地点],{destination}
         DATA_END
         """
 
-        with st.spinner("プロの視点でルートを再計算中..."):
+        with st.spinner(f"{full_dt_str} 出発の最適ルートを計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
@@ -90,15 +93,15 @@ if st.button("🚀 3つのルートを比較・提案してもらう"):
                     full_text = res.text
                     main_part = full_text.split("DATA_START")[0]
                     
-                    # --- 色付け処理を適用して表示 ---
+                    # --- 色付け適用 ---
                     colored_content = apply_custom_colors(main_part)
                     
                     st.markdown("---")
-                    st.markdown(f"### 🏁 提案結果 ({full_dt_str} 出発)")
+                    st.markdown(f"### 🏁 診断結果 ({full_dt_str} 出発)")
                     st.markdown(colored_content)
 
-                    # --- 地図ボタンの生成（出発地・目的地をユーザー入力で固定） ---
-                    st.subheader("📍 各ルートをGoogleマップで確認")
+                    # --- 地図ボタンの復活 ---
+                    st.subheader("📍 各ルートを一発でMAP表示")
                     data_match = re.search(r"DATA_START(.*?)DATA_END", full_text, re.DOTALL)
                     if data_match:
                         data_part = data_match.group(1)
@@ -110,12 +113,13 @@ if st.button("🚀 3つのルートを比較・提案してもらう"):
                             match = re.search(pattern, data_part)
                             if match:
                                 pts_raw = [p.strip() for p in match.group(1).split(",") if p.strip()]
-                                # ユーザー入力を最初と最後に強制セット
+                                # 入力値を最初と最後に固定してズレを防止
                                 middle = pts_raw[1:-1] if len(pts_raw) > 2 else []
                                 final_pts = [start_point] + middle + [destination]
                                 
+                                # Google Map ルートURL生成
                                 gmap_url = "https://www.google.com/maps/dir/" + "/".join([urllib.parse.quote(p) for p in final_pts])
                                 with cols[i]:
-                                    st.link_button(f"{label}を開く", gmap_url)
+                                    st.link_button(f"{label}を表示", gmap_url)
             except Exception as e:
                 st.error(f"エラー: {e}")
