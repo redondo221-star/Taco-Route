@@ -8,12 +8,27 @@ if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
 def get_working_model():
-    # 404エラーを徹底回避するためにモデル名をリストから取得
+    """
+    404エラー対策：利用可能なモデルを動的に取得する
+    """
     try:
+        # 利用可能な全モデルをリストアップ
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        target = next((m for m in available_models if '1.5-flash' in m), "models/gemini-1.5-flash")
-        return genai.GenerativeModel(target)
-    except:
+        
+        # 'flash' という名前を含むモデルを優先的に探す
+        target = next((m for m in available_models if '1.5-flash' in m), None)
+        
+        # 見つからない場合は 'pro' を探す
+        if not target:
+            target = next((m for m in available_models if '1.5-pro' in m), None)
+            
+        # それでも見つからない場合はリストの最初を使用
+        if not target and available_models:
+            target = available_models[0]
+            
+        return genai.GenerativeModel(target if target else 'gemini-1.5-flash')
+    except Exception:
+        # 万が一リスト取得に失敗した場合の予備
         return genai.GenerativeModel('gemini-1.5-flash')
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
@@ -58,8 +73,9 @@ if st.button("🚀 プロの推奨ルートを提案してもらう"):
         via_points = f"「{v1}」" if v1 else ""
         if v2: via_points += f" および 「{v2}」"
 
+        # AIへの指示：爆速コスパルートを再現するURLを生成させる
         prompt = f"""
-        あなたは日本の道路事情（バイパス、高速、ETC割引）に精通したプロドライバーです。
+        あなたは日本の道路事情に精通したプロドライバーです。
         以下の条件で3つのルート（案①最速、案②爆速コスパ、案③トータル最適）を提案してください。
 
         【絶対条件】
@@ -70,23 +86,25 @@ if st.button("🚀 プロの推奨ルートを提案してもらう"):
         【重要：比較表】
         案①（最速）を基準とし、案②・案③との差分（距離・時間・料金・1時間あたりの削減額）を表示。
 
-        【重要：Googleマップ検索用キーワード】
-        最後に、案②「爆速コスパルート」をGoogleマップで再現するための検索用リンクを生成してください。
-        この際、経由地だけでなく、あなたが選んだ「主要なバイパス名」や「降りるIC名」を地点として含めたリンクを作成してください。
+        【重要：Googleマップ連携】
+        回答の最後に、案②「爆速コスパルート」をGoogleマップ上で再現するためのリンクを作成してください。
+        Googleマップは単純な最短ルートを表示しようとするため、あなたが推奨する「あえて下道を走る区間」を維持できるよう、重要なバイパスの入り口や降りるICなどの地点を『経由地(waypoints)』として追加したURLを生成してください。
+        URL形式: https://www.google.com/maps/dir/?api=1&origin=出発地&destination=目的地&waypoints=経由地1|追加地点1|追加地点2&travelmode=driving
+
+        出発：{start_point} / 到着：{destination} / 車種：{vehicle} / 出発日時：{full_dt_str}
         """
 
-        with st.spinner("最適ルートを計算中..."):
+        with st.spinner("AIが最適なモデルを選択し、ルートを計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 
                 st.markdown("---")
                 st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
-                
-                # AIの回答を表示（この中にAIが作ったリンクが含まれる）
                 st.markdown(res.text)
                 
-                if v1 or v2:
-                    st.info(f"💡 {via_points} を経由するルートを計算しました。")
             except Exception as e:
-                st.error(f"エラー: {e}")
+                if "429" in str(e):
+                    st.error("⚠️ APIの無料枠制限（1日分）に達しました。明日またお試しください。")
+                else:
+                    st.error(f"エラーが発生しました: {e}")
