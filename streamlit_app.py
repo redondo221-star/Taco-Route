@@ -10,11 +10,7 @@ if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
 def get_working_model():
-    # 安全設定の緩和（エラー回避用）
     safety_settings = {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
     }
     try:
@@ -27,9 +23,9 @@ def get_working_model():
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
 
-# --- 2. 画面構成 ---
+# --- 2. 画面構成・入力フォーム ---
 st.title("🚗 Taco-Route")
-st.markdown("### プロ仕様・爆速再現モデル")
+st.markdown("### 3ルート完全比較・可視化モデル")
 
 start_point = st.text_input("出発地点", placeholder="例：宇都宮駅")
 destination = st.text_input("目的地", placeholder="例：大阪駅")
@@ -40,52 +36,65 @@ with col_v1:
 with col_v2:
     v2 = st.text_input("任意経由地2", placeholder="")
 
-with st.expander("🔄 詳細設定"):
+# --- 出発日時の設定（復活） ---
+with st.expander("🕒 出発日時・詳細設定", expanded=True):
+    col_d, col_t = st.columns(2)
+    with col_d:
+        input_date = st.date_input("出発日", value=datetime.now().date())
+    with col_t:
+        input_time = st.time_input("出発時刻", value=datetime.now().time())
     vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 
+departure_dt = datetime.combine(input_date, input_time)
+full_dt_str = departure_dt.strftime('%Y年%m月%d日 %H:%M')
+
 # --- 3. 実行処理 ---
-if st.button("🚀 独自の爆速ルートを生成"):
+if st.button("🚀 3つのルートを比較・提案してもらう"):
     if not start_point or not destination:
         st.warning("出発地と目的地を入力してください。")
     else:
+        # プロンプト：色分けのCSS適用とIC指定をさらに厳格化
         prompt = f"""
-        あなたは日本の道路マイスターです。以下の条件で3つのルートを提案してください。
-        
-        【重要ルール】
-        1. ルート図の記述様式：
-           - 高速道路は必ず `:red[== 道路名・IC名 ==]` と記述。
-           - 一般道は必ず `:blue[-- 道路名・バイパス名 --]` と記述。
-        2. 案②（爆速コスパ）は、Googleマップの標準ルートを無視し、信号の少ないバイパスと特定のIC区間を組み合わせたプロの最適解を出して。
-        3. 最後に必ず以下の地点データ（各案の再現用）を出力すること。
-           ※Googleマップで変なルートにならないよう、必ず「〇〇IC入口」「〇〇IC出口」「〇〇バイパス入口」など具体的名称を5つ以上並べること。
+        あなたは日本のプロドライバーです。以下の条件で3つのルートを提案してください。
+        出発日時：{full_dt_str}
+        出発：{start_point} / 目的地：{destination} / 経由：{v1}, {v2} / 車種：{vehicle}
+
+        【絶対遵守のルール】
+        1. ルート解説での色分け：
+           - 有料道路・高速区間は必ず `:red[== 道路名 (〇〇IC～××IC) ==]` と表記。
+           - 一般道・バイパス区間は必ず `:blue[-- 道路名・バイパス名 --]` と表記。
+        2. 比較表の提示：案①最速、案②爆速コスパ、案③トータル最適の距離・時間・料金を比較。
+        3. MAP再現用地点の抽出（重要）：
+           Googleマップが勝手にルートを変えないよう、各案の「乗るIC入口名」「降りるIC出口名」「バイパスの名称」を5つ以上、正確に抽出してください。
 
         DATA_START
-        ROUTE1_POINTS:{start_point},[IC名1],[IC名2],{destination}
-        ROUTE2_POINTS:{start_point},[バイパス入口],[IC入口],[IC出口],[バイパス出口],{destination}
-        ROUTE3_POINTS:{start_point},[主要経由地1],[主要経由地2],{destination}
+        ROUTE1_POINTS:{start_point},[乗るIC名1],[主要JCT],[降りるIC名1],{destination}
+        ROUTE2_POINTS:{start_point},[バイパス名],[乗るIC名2],[降りるIC名2],[バイパス名],{destination}
+        ROUTE3_POINTS:{start_point},[主要経由地],{destination}
         DATA_END
         """
 
-        with st.spinner("AIの遮断を回避しつつ、最短・最安を計算中..."):
+        with st.spinner("最適なICの出入り口を計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 
-                # エラーチェック
-                if not res.candidates or not res.candidates[0].content.parts:
-                    st.error("AIの回答が安全フィルターでブロックされました。表現を和らげて再試行します。")
-                else:
+                if res.candidates:
                     full_text = res.text
                     display_content = full_text.split("DATA_START")[0]
                     
-                    # 比較結果の表示
                     st.markdown("---")
+                    st.markdown(f"### 🏁 診断結果 ({full_dt_str} 出発)")
+                    
+                    # 1. 比較表と色分けルート解説を表示
                     st.markdown(display_content)
 
-                    # 地図ボタン
-                    st.subheader("📍 AI指定のIC・バイパスを強制経由する")
+                    # 2. 地図ボタンを表示
+                    st.subheader("📍 提案ルートをGoogleマップで開く")
+                    st.caption("※AIが指定した「乗るIC・降りるIC」を経由地として強制セットしています。")
+                    
                     cols = st.columns(3)
-                    labels = ["①最速", "②爆速コスパ", "③最適"]
+                    labels = ["①最速ルート", "②爆速コスパ", "③トータル最適"]
                     
                     data_match = re.search(r"DATA_START(.*?)DATA_END", full_text, re.DOTALL)
                     if data_match:
@@ -94,13 +103,13 @@ if st.button("🚀 独自の爆速ルートを生成"):
                             pattern = f"ROUTE{i+1}_POINTS:(.*)"
                             match = re.search(pattern, data_part)
                             if match:
+                                # 地点リストをURL化（経由地を重視するdir形式）
                                 pts = [p.strip() for p in match.group(1).split(",") if p.strip()]
-                                # URL生成（dir=方向指定モードを使用）
-                                base_url = "https://www.google.com/maps/dir/"
+                                # Google Mapのルート検索URL（/dir/地点1/地点2/...）
+                                gmap_base = "https://www.google.com/maps/dir/"
                                 query = "/".join([urllib.parse.quote(p) for p in pts])
-                                final_url = base_url + query
                                 
                                 with cols[i]:
-                                    st.link_button(f"{label}を表示", final_url)
+                                    st.link_button(f"{label}", gmap_base + query)
             except Exception as e:
-                st.error(f"システムエラー: {e}")
+                st.error(f"エラーが発生しました: {e}")
