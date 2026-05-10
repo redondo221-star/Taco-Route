@@ -18,34 +18,40 @@ def get_working_model():
     except Exception:
         return genai.GenerativeModel('gemini-1.5-flash')
 
-st.set_page_config(page_title="Taco-Route Pro", layout="wide") # 表を見やすくするためwideに設定
+# スマホで見やすくするため、標準レイアウトに設定
+st.set_page_config(page_title="Taco-Route", layout="centered")
 
 # --- 2. セッション状態の初期化 ---
 if "now" not in st.session_state:
     st.session_state.now = datetime.now()
 
-st.title("🚗 Taco-Route ")
+# --- 3. メインUI構成 ---
+st.title("🚗 Taco-Route")
 st.markdown("### 最速基準・コスト削減分析モデル")
 
-# --- 3. 入力フォーム ---
-with st.sidebar:
-    st.header("📍 目的地設定")
-    start_point = st.text_input("出発地点", value="宇都宮駅")
-    destination = st.text_input("目的地", value="大阪駅")
+# 全ての入力をメイン画面に配置
+st.subheader("📍 ルート検索設定")
 
-    col_v1, col_v2 = st.columns(2)
-    with col_v1:
-        v1 = st.text_input("経由地1(必須)", placeholder="例：佐野SA")
-    with col_v2:
-        v2 = st.text_input("経由地2(任意)", placeholder="")
+# 地点入力
+start_point = st.text_input("出発地点", value="宇都宮駅", placeholder="例：宇都宮駅")
+destination = st.text_input("目的地", value="大阪駅", placeholder="例：大阪駅")
 
+# 経由地（スマホで見やすいよう、少しコンパクトに）
+col_v1, col_v2 = st.columns(2)
+with col_v1:
+    v1 = st.text_input("必須経由地", placeholder="例：佐野SA")
+with col_v2:
+    v2 = st.text_input("任意経由地", placeholder="")
+
+# 車種と日時の設定
+col_vh, col_dt = st.columns([1, 1])
+with col_vh:
     vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 
-    st.markdown("---")
-    st.write("🕒 出発日時設定")
-    # keyを設定することで値の保持を確実にします
-    input_date = st.date_input("出発日", value=st.session_state.now.date(), key="d_input")
-    input_time = st.time_input("出発時刻", value=st.session_state.now.time(), key="t_input")
+with col_dt:
+    st.write("🕒 出発日時")
+    input_date = st.date_input("日付", value=st.session_state.now.date(), key="d_input", label_visibility="collapsed")
+    input_time = st.time_input("時刻", value=st.session_state.now.time(), key="t_input", label_visibility="collapsed")
 
 # 出発日時と曜日の計算
 departure_dt = datetime.combine(input_date, input_time)
@@ -53,8 +59,10 @@ weeks = ["月", "火", "水", "木", "金", "土", "日"]
 day_of_week = weeks[departure_dt.weekday()]
 full_dt_str = f"{departure_dt.strftime('%Y年%m月%d日')}({day_of_week}) {input_time.strftime('%H:%M')}"
 
+st.markdown("---")
+
 # --- 4. 実行ボタン ---
-if st.button("🚀 プロの推奨ルートを提案してもらう"):
+if st.button("🚀 この条件でルートを提案してもらう", use_container_width=True):
     if not start_point or not destination:
         st.warning("出発地点と目的地を入力してください。")
     else:
@@ -90,18 +98,18 @@ if st.button("🚀 プロの推奨ルートを提案してもらう"):
         出発：{start_point} / 到着：{destination} / 車種：{vehicle}
         """
 
-        with st.spinner(f"{full_dt_str} の最適ルートを解析中..."):
+        with st.spinner(f"最適ルートを解析中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 
                 if res.text:
                     full_text = res.text
-                    # 表示用（地点データは隠す）
                     display_content = full_text.split("DATA_START")[0]
                     
-                    st.markdown("---")
-                    st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
+                    st.success(f"解析完了: {full_dt_str} 出発")
+                    
+                    # メインの解説と表を表示
                     st.markdown(display_content)
                     
                     # --- MAPボタンの生成処理 ---
@@ -110,24 +118,21 @@ if st.button("🚀 プロの推奨ルートを提案してもらう"):
                         st.subheader("📍 Googleマップでルートを確認")
                         data_part = full_text.split("DATA_START")[1].split("DATA_END")[0]
                         
-                        cols = st.columns(3)
+                        # スマホだと横並びボタンは小さすぎるため、縦に並べるかcontainerを使う
                         btn_labels = ["①最速ルート", "②爆速コスパ", "③トータル最適"]
                         
                         for i, label in enumerate(btn_labels):
-                            # ROUTE1:地点A,地点B... を探す
                             match = re.search(f"ROUTE{i+1}:(.*)", data_part)
                             if match:
                                 pts = [p.strip() for p in match.group(1).split(",") if p.strip()]
-                                # URLエンコードしてGoogleマップURLを作成
-                                # 最初の地点と最後の地点は確実に入力値を使う
+                                # 入口・出口を明確にしたURL生成
                                 final_pts = [start_point] + pts[1:-1] + [destination]
                                 encoded_path = "/".join([urllib.parse.quote(p) for p in final_pts])
                                 gmap_url = f"https://www.google.com/maps/dir/{encoded_path}"
                                 
-                                with cols[i]:
-                                    st.link_button(f"🗺️ {label}を表示", gmap_url, use_container_width=True)
+                                st.link_button(f"🗺️ {label}の地図を表示", gmap_url, use_container_width=True)
 
                     if v1 or v2:
-                        st.info(f"💡 経由地 {via_points} を考慮した分析結果です。")
+                        st.info(f"💡 経由地 {via_points} を考慮した結果です。")
             except Exception as e:
-                st.error(f"解析中にエラーが発生しました。時間を置いて再度お試しください。: {e}")
+                st.error(f"エラーが発生しました: {e}")
