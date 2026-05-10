@@ -8,21 +8,22 @@ if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
 def get_working_model():
+    # 404エラー対策として最も標準的な名称を指定
+    # それでもダメな場合は1.5-proに切り替える
     try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        target_model = next((m for m in available_models if 'gemini-1.5-flash' in m), "models/gemini-1.5-flash")
-        return genai.GenerativeModel(target_model)
-    except:
         return genai.GenerativeModel('gemini-1.5-flash')
+    except:
+        return genai.GenerativeModel('gemini-1.5-pro')
 
-st.set_page_config(page_title="Taco-Route Pro", layout="centered")
+st.set_page_config(page_title="Taco-Route", layout="centered")
 
 # --- 2. 時刻・入力設定 ---
 if "now" not in st.session_state:
     st.session_state.now = datetime.utcnow() + timedelta(hours=9)
 
-st.title("🚗 Taco-Route ")
-st.markdown("### 視覚的ルート分析・Googleマップ連携モデル")
+# タイトルからProfessionalを削除
+st.title("🚗 Taco-Route")
+st.markdown("### 最速基準・コスト削減分析モデル")
 
 # --- 3. 入力フォーム ---
 start_point = st.text_input("出発地点", placeholder="例：宇都宮駅")
@@ -51,42 +52,46 @@ full_dt_str = f"{departure_dt.strftime('%Y年%m月%d日')}({day_of_week}) {input
 
 # --- 4. Googleマップ用リンク生成関数 ---
 def create_gmap_url(start, end, via1, via2):
-    base_url = "https://www.google.com/maps/dir/?api=1"
-    params = {
-        "origin": start,
-        "destination": end,
-        "travelmode": "driving"
-    }
-    vias = [v for v in [via1, via2] if v]
-    if vias:
-        params["waypoints"] = "|".join(vias)
-    return base_url + "&" + urllib.parse.urlencode(params)
+    # ブラウザで開くための標準的なGoogleマップURL
+    base_url = "https://www.google.com/maps/dir/"
+    points = [start]
+    if via1: points.append(via1)
+    if via2: points.append(via2)
+    points.append(end)
+    
+    # 全地点をスラッシュで繋いでエンコード
+    path = "/".join([urllib.parse.quote(p) for p in points])
+    return base_url + path
 
 # --- 5. 実行ボタン ---
 if st.button("🚀 プロの推奨ルートを提案してもらう"):
     if not start_point or not destination:
         st.warning("出発地点と目的地を入力してください。")
     else:
-        # Geminiへの指示
+        via_points = f"「{v1}」" if v1 else ""
+        if v2: via_points += f" および 「{v2}」"
+
+        # Geminiへの詳細な指示
         prompt = f"""
-        あなたは日本中の道路に精通したプロドライバーです。
+        あなたは日本の道路事情（バイパス、高速、ETC割引）に精通したプロドライバーです。
         以下の条件で3つのルート（案①最速、案②爆速コスパ、案③トータル最適）を提案してください。
 
         【絶対条件】
-        - 経由地 {v1} {v2} は必ず通過すること。
+        - 経由地 {via_points} は必ず通過すること。
         - 高速道路は :red[赤文字]、一般道・バイパスは :blue[青文字] で記載。
-        - 案ごとに、文字（記号）を使った「簡易ルート図」を必ず作成してください。
-          例：[出発地] ---:red[高速名]--- (経由地) ---:blue[バイパス名]--- [目的地]
+        - 案ごとに、文字記号を使った「簡易ルート図」を必ず作成して視覚化すること。
+          例：[出発地] === :red[高速名] === (経由地) --- :blue[バイパス名] --- [目的地]
 
-        【比較表の作成ルール】
-        案①（最速）を基準(0)とし、案②・案③との「差分」を表示。
-        項目：走行距離、所要時間、高速料金、距離差(km)、時間差(分)、料金差(円)、1時間あたりの削減額(円/h)
+        【重要：比較表の作成ルール】
+        案①（最速）の結果を基準(0)とし、案②・案③との「差分」を計算して表示してください。
+        項目：走行距離(km)、所要時間(h:mm)、高速料金(円)、距離差(km)、時間差(分)、料金差(円)、1時間あたりの削減額(円/h)
+        ※削減額計算：料金差 ÷ (時間差/60)
 
         【走行条件】
         出発：{start_point} / 到着：{destination} / 車種：{vehicle} / 出発日時：{full_dt_str}
         """
 
-        with st.spinner("ルートと簡易マップを生成中..."):
+        with st.spinner(f"最適ルートを計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
@@ -94,11 +99,14 @@ if st.button("🚀 プロの推奨ルートを提案してもらう"):
                 st.markdown("---")
                 st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
                 
-                # Googleマップへのリンクを表示
+                # Googleマップへのリンクを表示（もっとも確実な地図確認方法）
                 gmap_link = create_gmap_url(start_point, destination, v1, v2)
-                st.link_button("📍 提案ルートをGoogleマップで確認（ナビ開始）", gmap_link)
+                st.link_button("📍 このルートをGoogleマップで開く", gmap_link)
                 
                 st.markdown(res.text)
                 
             except Exception as e:
-                st.error(f"エラー: {e}")
+                if "429" in str(e):
+                    st.error("⚠️ AIの利用制限（1日分）に達しました。明日またお試しください。")
+                else:
+                    st.error(f"エラーが発生しました: {e}")
