@@ -36,7 +36,7 @@ with col_v1:
 with col_v2:
     v2 = st.text_input("任意経由地2", placeholder="")
 
-# --- 出発日時の設定（復活） ---
+# --- 出発日時の設定 ---
 with st.expander("🕒 出発日時・詳細設定", expanded=True):
     col_d, col_t = st.columns(2)
     with col_d:
@@ -53,63 +53,71 @@ if st.button("🚀 3つのルートを比較・提案してもらう"):
     if not start_point or not destination:
         st.warning("出発地と目的地を入力してください。")
     else:
-        # プロンプト：色分けのCSS適用とIC指定をさらに厳格化
+        # プロンプト：比較表の強制と、JCT名などの不安定な名称を避けるよう指示
         prompt = f"""
-        あなたは日本のプロドライバーです。以下の条件で3つのルートを提案してください。
-        出発日時：{full_dt_str}
-        出発：{start_point} / 目的地：{destination} / 経由：{v1}, {v2} / 車種：{vehicle}
+        あなたは日本のプロドライバーです。以下の条件で3つのルートを必ず提案してください。
 
-        【絶対遵守のルール】
-        1. ルート解説での色分け：
-           - 有料道路・高速区間は必ず `:red[== 道路名 (〇〇IC～××IC) ==]` と表記。
-           - 一般道・バイパス区間は必ず `:blue[-- 道路名・バイパス名 --]` と表記。
-        2. 比較表の提示：案①最速、案②爆速コスパ、案③トータル最適の距離・時間・料金を比較。
-        3. MAP再現用地点の抽出（重要）：
-           Googleマップが勝手にルートを変えないよう、各案の「乗るIC入口名」「降りるIC出口名」「バイパスの名称」を5つ以上、正確に抽出してください。
+        【条件】
+        出発：{start_point} / 目的地：{destination} / 経由：{v1}, {v2} / 出発日時：{full_dt_str}
+
+        【必須回答項目（これがないとやり直しです）】
+        1. 案①最速、案②爆速コスパ、案③トータル最適の3案すべてについて、
+           「走行距離(km)」「所要時間」「高速料金(円)」を算出した【比較表】（Markdown形式）を冒頭に作成してください。
+        2. ルート解説での色分け：
+           - 高速・有料道路： :red[== 道路名 (〇〇IC〜××IC) ==] （赤色）
+           - 一般道・バイパス： :blue[-- 道路名 --] （青色）
+        3. MAP再現用地点データ：
+           各案を再現するための地点名を抽出してください。
+           注意：JCT名単体などはGoogleマップでエラーになることが多いため、「〇〇IC入口」「〇〇IC出口」のように、必ず実在する施設名やIC名にしてください。
 
         DATA_START
-        ROUTE1_POINTS:{start_point},[乗るIC名1],[主要JCT],[降りるIC名1],{destination}
-        ROUTE2_POINTS:{start_point},[バイパス名],[乗るIC名2],[降りるIC名2],[バイパス名],{destination}
+        ROUTE1_POINTS:{start_point},[IC入口名],[IC出口名],{destination}
+        ROUTE2_POINTS:{start_point},[バイパス名],[IC入口名],[IC出口名],{destination}
         ROUTE3_POINTS:{start_point},[主要経由地],{destination}
         DATA_END
         """
 
-        with st.spinner("最適なICの出入り口を計算中..."):
+        with st.spinner("プロの視点でルートを再計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 
                 if res.candidates:
                     full_text = res.text
+                    # DATA_STARTより前の部分（比較表と色分け解説）を確実に表示
                     display_content = full_text.split("DATA_START")[0]
                     
                     st.markdown("---")
-                    st.markdown(f"### 🏁 診断結果 ({full_dt_str} 出発)")
-                    
-                    # 1. 比較表と色分けルート解説を表示
-                    st.markdown(display_content)
+                    st.markdown(f"### 🏁 提案結果 ({full_dt_str} 出発)")
+                    st.markdown(display_content) # ここに比較表と色分けが含まれます
 
-                    # 2. 地図ボタンを表示
-                    st.subheader("📍 提案ルートをGoogleマップで開く")
-                    st.caption("※AIが指定した「乗るIC・降りるIC」を経由地として強制セットしています。")
-                    
-                    cols = st.columns(3)
-                    labels = ["①最速ルート", "②爆速コスパ", "③トータル最適"]
-                    
+                    # --- 地図ボタンの生成 ---
+                    st.subheader("📍 各ルートをGoogleマップで確認")
                     data_match = re.search(r"DATA_START(.*?)DATA_END", full_text, re.DOTALL)
                     if data_match:
                         data_part = data_match.group(1)
+                        cols = st.columns(3)
+                        labels = ["①最速ルート", "②爆速コスパ", "③トータル最適"]
+                        
                         for i, label in enumerate(labels):
                             pattern = f"ROUTE{i+1}_POINTS:(.*)"
                             match = re.search(pattern, data_part)
                             if match:
-                                # 地点リストをURL化（経由地を重視するdir形式）
-                                pts = [p.strip() for p in match.group(1).split(",") if p.strip()]
-                                # Google Mapのルート検索URL（/dir/地点1/地点2/...）
-                                gmap_base = "https://www.google.com/maps/dir/"
-                                query = "/".join([urllib.parse.quote(p) for p in pts])
+                                # 出発点と目的地を、ユーザー入力値で強制上書き（ズレ防止）
+                                pts_raw = [p.strip() for p in match.group(1).split(",") if p.strip()]
+                                if len(pts_raw) >= 2:
+                                    # 抽出された中間地点のみを利用し、最初と最後はユーザー入力を使用
+                                    middle_points = pts_raw[1:-1]
+                                    final_pts = [start_point] + middle_points + [destination]
+                                else:
+                                    final_pts = [start_point, destination]
+                                
+                                # Google Map URL (dir形式)
+                                gmap_url = "https://www.google.com/maps/dir/" + "/".join([urllib.parse.quote(p) for p in final_pts])
                                 
                                 with cols[i]:
-                                    st.link_button(f"{label}", gmap_base + query)
+                                    st.link_button(f"{label}", gmap_url)
+                    else:
+                        st.error("地図データの生成に失敗しました。")
             except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+                st.error(f"エラー: {e}")
