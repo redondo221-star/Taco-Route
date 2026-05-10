@@ -21,104 +21,96 @@ def get_working_model():
     except:
         return genai.GenerativeModel('gemini-1.5-flash', safety_settings=safety_settings)
 
-st.set_page_config(page_title="Taco-Route", layout="centered")
+st.set_page_config(page_title="Taco-Route", layout="wide")
 
-# --- 2. 画面構成・入力フォーム ---
+# --- 2. UI構成 ---
 st.title("🚗 Taco-Route")
 st.markdown("### 3ルート完全比較・可視化モデル")
 
-start_point = st.text_input("出発地点", placeholder="例：宇都宮駅", key="start")
-destination = st.text_input("目的地", placeholder="例：大阪駅", key="dest")
-
-col_v1, col_v2 = st.columns(2)
-with col_v1:
+with st.sidebar:
+    st.header("入力設定")
+    start_point = st.text_input("出発地点", value="宇都宮駅")
+    destination = st.text_input("目的地", value="大阪駅")
     v1 = st.text_input("必須経由地1", placeholder="例：さいたま市")
-with col_v2:
     v2 = st.text_input("任意経由地2", placeholder="")
+    
+    st.markdown("---")
+    st.subheader("🕒 出発日時")
+    # keyを固定することで値が消えるのを防ぎます
+    d = st.date_input("出発日", value=datetime.now().date(), key="date_input")
+    t = st.time_input("出発時刻", value=datetime.now().time(), key="time_input")
+    vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
 
-# --- 出発日時の設定（確実に反映されるよう修正） ---
-st.markdown("🕒 **出発日時・詳細設定**")
-col_d, col_t = st.columns(2)
-with col_d:
-    input_date = st.date_input("出発日", value=datetime.now().date())
-with col_t:
-    input_time = st.time_input("出発時刻", value=datetime.now().time())
+# 統合された日時
+departure_dt = datetime.combine(d, t)
+dt_str = departure_dt.strftime('%Y-%m-%d %H:%M')
 
-vehicle = st.radio("車種", ["普通車", "軽自動車"], horizontal=True)
-
-# 選択された日時を文字列化
-departure_dt = datetime.combine(input_date, input_time)
-full_dt_str = departure_dt.strftime('%Y年%m月%d日 %H:%M')
-
-# --- 色付け関数 ---
-def apply_custom_colors(text):
-    # 高速・有料（赤）
-    text = re.sub(r'(高速道路|有料道路|IC|JCT|自動車道|パーキング|==.*?==)', r':red[\1]', text)
-    # 一般道・バイパス（青）
-    text = re.sub(r'(一般道|国道|県道|バイパス|--.*?--)', r':blue[\1]', text)
-    return text
-
-# --- 3. 実行処理 ---
-if st.button("🚀 3つのルートを比較・提案してもらう"):
+# --- 3. 実行ロジック ---
+if st.button("🚀 3つのルートを提案してもらう"):
     if not start_point or not destination:
-        st.warning("出発地と目的地を入力してください。")
+        st.error("出発地と目的地を入力してください。")
     else:
-        # プロンプト：比較表形式の徹底と、データ隠蔽を指示
+        # プロンプト：以前の「表が綺麗だった」状態を再現しつつ、MAP用データを隠し持つ
         prompt = f"""
-        あなたは日本のプロドライバーです。以下の条件で3つのルートを提案してください。
-        出発：{start_point} / 目的地：{destination} / 経由：{v1}, {v2} / 車種：{vehicle} / 出発日時：{full_dt_str}
+        あなたは日本の交通事情に精通したプロのルートプランナーです。
+        出発日時 {dt_str} における、{start_point}から{destination}への3つのルート案を作成してください。
 
-        【必須ルール】
-        1. 冒頭に必ず以下の【比較表】を作成。
+        【必須構成】
+        1. 冒頭に比較表をMarkdown形式で作成。
            列：案名 | 距離(km) | 時間 | 料金(円) | 案①との時間差 | 案①との料金差
-        2. ルート解説での色分け：
-           - 有料・高速は「== 道路名 ==」、一般道は「-- 道路名 --」と表記。
-        3. 最後にMAPボタン用の地点リストを DATA_START と DATA_END で囲んで出力。
-           ※このリストは後でプログラムで抽出するため、正確なIC名やバイパス名で。
+        
+        2. 各案の詳細解説：
+           - 高速・有料道路区間は :red[== 道路名 (〇〇IC～××IC) ==] と表記。
+           - 一般道・バイパス区間は :blue[-- 道路名 --] と表記。
+        
+        3. 回答の最後に、地図表示用の地点データのみを以下の形式で出力（ユーザーには見せない隠しデータ）。
+           地点は「行ってこい」にならないよう、最小限の主要地点（乗るICと降りるIC等）だけにしてください。
 
         DATA_START
-        ROUTE1_POINTS:{start_point},[IC名],[IC名],{destination}
-        ROUTE2_POINTS:{start_point},[バイパス名],[IC名],[バイパス名],{destination}
-        ROUTE3_POINTS:{start_point},[主要経由地],{destination}
+        ROUTE1:{start_point},[IC名1],[IC名2],{destination}
+        ROUTE2:{start_point},[主要バイパス名],[IC名1],[IC名2],{destination}
+        ROUTE3:{start_point},[主要経由地],{destination}
         DATA_END
         """
 
-        with st.spinner(f"{full_dt_str} 出発のルートを算出中..."):
-            try:
-                model = get_working_model()
-                res = model.generate_content(prompt)
+        with st.spinner("プロの視点でルートを解析中..."):
+            model = get_working_model()
+            response = model.generate_content(prompt)
+            
+            if response.text:
+                full_text = response.text
                 
-                if res.candidates:
-                    full_text = res.text
-                    # 画面表示用（DATA_START以降を切り捨てることで、地点リストを表示させない）
-                    display_part = full_text.split("DATA_START")[0]
-                    
+                # 表示用とデータ用に分割
+                parts = full_text.split("DATA_START")
+                display_content = parts[0]
+                
+                st.markdown("---")
+                st.markdown(f"## 🏁 提案結果 ({dt_str} 出発)")
+                
+                # メインの表と解説を表示
+                st.markdown(display_content)
+                
+                # --- 地図ボタンの生成 ---
+                if "DATA_END" in full_text:
+                    data_section = parts[1].split("DATA_END")[0]
                     st.markdown("---")
-                    st.markdown(f"### 🏁 診断結果 ({full_dt_str} 出発)")
+                    st.subheader("📍 Googleマップでルートを確認")
+                    cols = st.columns(3)
+                    labels = ["①最速ルート", "②爆速コスパ", "③トータル最適"]
                     
-                    # 色付けを適用してメインコンテンツを表示（ここに以前の表が含まれます）
-                    st.markdown(apply_custom_colors(display_part))
-
-                    # --- 地図ボタンの生成 ---
-                    data_match = re.search(r"DATA_START(.*?)DATA_END", full_text, re.DOTALL)
-                    if data_match:
-                        st.subheader("📍 各ルートをGoogleマップで開く")
-                        data_part = data_match.group(1)
-                        cols = st.columns(3)
-                        labels = ["①最速", "②爆速コスパ", "③最適"]
-                        
-                        for i, label in enumerate(labels):
-                            pattern = f"ROUTE{i+1}_POINTS:(.*)"
-                            match = re.search(pattern, data_part)
-                            if match:
-                                # 地点を整理（出発地・目的地はユーザー入力を優先）
-                                pts_raw = [p.strip() for p in match.group(1).split(",") if p.strip()]
-                                middle = pts_raw[1:-1] if len(pts_raw) > 2 else []
-                                final_pts = [start_point] + middle + [destination]
-                                
-                                # Google Map URL
-                                gmap_url = "https://www.google.com/maps/dir/" + "/".join([urllib.parse.quote(p) for p in final_pts])
-                                with cols[i]:
-                                    st.link_button(f"{label}を表示", gmap_url)
-            except Exception as e:
-                st.error(f"エラー: {e}")
+                    for i, label in enumerate(labels):
+                        match = re.search(f"ROUTE{i+1}:(.*)", data_section)
+                        if match:
+                            pts = [p.strip() for p in match.group(1).split(",") if p.strip()]
+                            # URL生成（Google Maps Directions）
+                            # 最初の地点と最後の地点はユーザー入力値を使い、ズレを防止
+                            encoded_pts = [urllib.parse.quote(start_point)]
+                            for p in pts[1:-1]:
+                                encoded_pts.append(urllib.parse.quote(p))
+                            encoded_pts.append(urllib.parse.quote(destination))
+                            
+                            gmap_url = f"https://www.google.com/maps/dir/{'/'.join(encoded_pts)}"
+                            with cols[i]:
+                                st.link_button(label, gmap_url, use_container_width=True)
+            else:
+                st.error("AIからの回答が得られませんでした。もう一度お試しください。")
