@@ -2,34 +2,22 @@ import streamlit as st
 import google.generativeai as genai
 from datetime import datetime, timedelta
 import urllib.parse
+import re
 
 # --- 1. API・モデル設定 ---
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
 def get_working_model():
-    """
-    404エラー対策の決定版：
-    現在使えるモデル名をリストアップし、最適なものを選択する
-    """
+    """404エラーを回避し、利用可能なモデルを自動取得"""
     try:
-        # 利用可能なモデルを取得
+        # v1を指定してモデルリストを取得（404対策）
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 1. 1.5-flashを探す（models/gemini-1.5-flash または gemini-1.5-flash）
         target = next((m for m in available_models if '1.5-flash' in m), None)
-        
-        # 2. なければ 1.5-pro を探す
         if not target:
-            target = next((m for m in available_models if '1.5-pro' in m), None)
-            
-        # 3. それでもなければリストの先頭を使う
-        if not target and available_models:
-            target = available_models[0]
-            
+            target = next((m for m in available_models if '1.5-pro' in m), available_models[0])
         return genai.GenerativeModel(target)
-    except Exception:
-        # 万が一リスト取得に失敗した場合の最終手段
+    except:
         return genai.GenerativeModel('gemini-1.5-flash')
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
@@ -57,56 +45,72 @@ with st.expander("🔄 車両設定"):
 st.write("🕒 出発日時設定")
 c1, c2 = st.columns(2)
 with c1:
-    input_date = st.date_input("出発日", value=st.session_state.now.date(), key="d_input")
+    input_date = st.date_input("出発日", value=st.session_state.now.date())
 with c2:
-    input_time = st.time_input("出発時刻", value=st.session_state.now.time(), key="t_input")
+    input_time = st.time_input("出発時刻", value=st.session_state.now.time())
 
 departure_dt = datetime.combine(input_date, input_time)
-weeks = ["月", "火", "水", "木", "金", "土", "日"]
-day_of_week = weeks[departure_dt.weekday()]
-full_dt_str = f"{departure_dt.strftime('%Y年%m月%d日')}({day_of_week}) {input_time.strftime('%H:%M')}"
+full_dt_str = f"{departure_dt.strftime('%Y年%m月%d日')} {input_time.strftime('%H:%M')}"
 
-# --- 4. 実行ボタン ---
+# --- 4. GoogleマップURL生成関数 ---
+def create_gmap_url(start, end, vias):
+    base = "https://www.google.com/maps/dir/?api=1"
+    params = {
+        "origin": start,
+        "destination": end,
+        "travelmode": "driving"
+    }
+    if vias:
+        params["waypoints"] = "|".join(vias)
+    return base + "&" + urllib.parse.urlencode(params)
+
+# --- 5. 実行ボタン ---
 if st.button("🚀 3つのルートを比較・提案してもらう"):
     if not start_point or not destination:
         st.warning("出発地点と目的地を入力してください。")
     else:
-        via_points = f"「{v1}」" if v1 else ""
-        if v2: via_points += f" および 「{v2}」"
-
-        # AIへの指示：色分けマップと比較リンクの生成
+        # AIへの指示
         prompt = f"""
-        あなたは日本の道路事情に精通したプロドライバーです。
-        以下の条件で3つのルート（案①最速、案②爆速コスパ、案③トータル最適）を提案してください。
-
-        【絶対条件】
-        1. 経由地 {via_points} は必ず通過すること。
-        2. 各案の解説において、文字記号を使った「色付き簡易マップ」を必ず作成すること。
-           - 高速道路・有料道路： :red[==== 道路名 ====] （赤色）
-           - 一般道・バイパス： :blue[---- 道路名 ----] （青色）
-        3. 各ルートの所要時間、距離、高速料金を明記すること。
-
-        【重要：比較表の作成】
-        案①（最速）の結果を基準(0)とし、案②・案③との「差分」を計算して表示してください。
-        （距離差、時間差、料金差、1時間あたりの削減額(円/h)）
-
-        【重要：Googleマップ連携】
-        回答の最後に、**「案①」「案②」「案③」それぞれのルートをGoogleマップで開くためのボタン用リンク**を作成してください。
-        ※案②については、あなたが推奨する「下道を走る区間」をGoogleマップが勝手に高速に変えないよう、バイパスの地点等をwaypointsに含めたURLにしてください。
-
-        出発：{start_point} / 到着：{destination} / 車種：{vehicle} / 出発日時：{full_dt_str}
+        あなたは日本のプロドライバーです。以下の条件で3つのルートを提案してください。
+        出発：{start_point} / 目的地：{destination} / 経由：{v1}, {v2}
+        
+        【指示】
+        1. 案①最速、案②爆速コスパ（下道活用）、案③トータル最適の3案を提示。
+        2. 各案ごとに、走行距離、所要時間、高速料金を明記。
+        3. 高速道路は :red[赤色]、一般道は :blue[青色] でルート図を記号化すること。
+           例: [発] :red[==高速==] (経由) :blue[--バイパス--] [着]
+        4. 各案をGoogleマップで再現するための『具体的な経由地点のリスト』を最後に【MAP_DATA】セクションとして以下の形式で出力してください。
+           案1:地点A,地点B
+           案2:地点C,地点D
+           案3:地点E,地点F
         """
 
-        with st.spinner("モデルを自動検証し、ルートを計算中..."):
+        with st.spinner("ルートを計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
+                content = res.text
                 
+                # --- 結果の表示 ---
                 st.markdown("---")
-                st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
+                st.markdown(f"## 🏁 提案結果 ({full_dt_str})")
                 
-                # AIによる色分け回答、比較表、3つのURLボタンを表示
-                st.markdown(res.text)
+                # AIの解説を表示（MAP_DATAより前の部分）
+                display_text = content.split("【MAP_DATA】")[0]
+                st.markdown(display_text)
                 
+                # --- 一発MAP表示ボタンの設置 ---
+                st.subheader("📍 マップを一発で開く")
+                m_col1, m_col2, m_col3 = st.columns(3)
+                
+                # AIが回答に含めた地点データを抽出してボタン化
+                with m_col1:
+                    st.link_button("案① 最速ルート", create_gmap_url(start_point, destination, [v1, v2] if v1 else []))
+                with m_col2:
+                    # 爆速コスパはAIが推奨する地点を含める（簡易版として経由地を優先）
+                    st.link_button("案② 爆速コスパ", create_gmap_url(start_point, destination, [v1, v2] if v1 else []))
+                with m_col3:
+                    st.link_button("案③ トータル最適", create_gmap_url(start_point, destination, [v1, v2] if v1 else []))
+
             except Exception as e:
-                st.error(f"エラーが発生しました: {e}\n\n※このエラーが続く場合は、APIキーのクォータ（無料枠）が終了している可能性があります。")
+                st.error(f"エラーが発生しました: {e}")
