@@ -9,18 +9,27 @@ if "API_KEY" in st.secrets:
 
 def get_working_model():
     """
-    404エラー対策：利用可能なモデル（flash または pro）を動的に取得する
+    404エラー対策の決定版：
+    現在使えるモデル名をリストアップし、最適なものを選択する
     """
     try:
+        # 利用可能なモデルを取得
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # 1.5-flashを探す
-        target = next((m for m in available_models if '1.5-flash' in m), None)
-        if not target:
-            # なければ 1.5-pro
-            target = next((m for m in available_models if '1.5-pro' in m), None)
         
-        return genai.GenerativeModel(target if target else 'gemini-1.5-flash')
-    except:
+        # 1. 1.5-flashを探す（models/gemini-1.5-flash または gemini-1.5-flash）
+        target = next((m for m in available_models if '1.5-flash' in m), None)
+        
+        # 2. なければ 1.5-pro を探す
+        if not target:
+            target = next((m for m in available_models if '1.5-pro' in m), None)
+            
+        # 3. それでもなければリストの先頭を使う
+        if not target and available_models:
+            target = available_models[0]
+            
+        return genai.GenerativeModel(target)
+    except Exception:
+        # 万が一リスト取得に失敗した場合の最終手段
         return genai.GenerativeModel('gemini-1.5-flash')
 
 st.set_page_config(page_title="Taco-Route", layout="centered")
@@ -65,6 +74,7 @@ if st.button("🚀 3つのルートを比較・提案してもらう"):
         via_points = f"「{v1}」" if v1 else ""
         if v2: via_points += f" および 「{v2}」"
 
+        # AIへの指示：色分けマップと比較リンクの生成
         prompt = f"""
         あなたは日本の道路事情に精通したプロドライバーです。
         以下の条件で3つのルート（案①最速、案②爆速コスパ、案③トータル最適）を提案してください。
@@ -74,19 +84,20 @@ if st.button("🚀 3つのルートを比較・提案してもらう"):
         2. 各案の解説において、文字記号を使った「色付き簡易マップ」を必ず作成すること。
            - 高速道路・有料道路： :red[==== 道路名 ====] （赤色）
            - 一般道・バイパス： :blue[---- 道路名 ----] （青色）
-           - 例: [出発地] :red[==東北道==] (経由地) :blue[--国道4号--] [目的地]
+        3. 各ルートの所要時間、距離、高速料金を明記すること。
+
+        【重要：比較表の作成】
+        案①（最速）の結果を基準(0)とし、案②・案③との「差分」を計算して表示してください。
+        （距離差、時間差、料金差、1時間あたりの削減額(円/h)）
 
         【重要：Googleマップ連携】
-        回答の最後に、**「3つのルートそれぞれ」**をGoogleマップで開くためのボタン用リンクを作成してください。
-        特に「案②」については、意図した下道を通るように経由地（waypoints）を工夫したURLにすること。
-
-        【重要：比較表】
-        案①（最速）を基準(0)とし、案②・案③との差分（距離・時間・料金・1時間あたりの削減額）を一覧表にすること。
+        回答の最後に、**「案①」「案②」「案③」それぞれのルートをGoogleマップで開くためのボタン用リンク**を作成してください。
+        ※案②については、あなたが推奨する「下道を走る区間」をGoogleマップが勝手に高速に変えないよう、バイパスの地点等をwaypointsに含めたURLにしてください。
 
         出発：{start_point} / 到着：{destination} / 車種：{vehicle} / 出発日時：{full_dt_str}
         """
 
-        with st.spinner("AIが最適なルートと地図リンクを生成中..."):
+        with st.spinner("モデルを自動検証し、ルートを計算中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
@@ -94,11 +105,8 @@ if st.button("🚀 3つのルートを比較・提案してもらう"):
                 st.markdown("---")
                 st.markdown(f"## 🏁 {full_dt_str} 出発の提案結果")
                 
-                # AIの回答（ここに色分けマップ、比較表、各ルートのURLが含まれる）
+                # AIによる色分け回答、比較表、3つのURLボタンを表示
                 st.markdown(res.text)
                 
             except Exception as e:
-                if "429" in str(e):
-                    st.error("⚠️ AIの無料枠制限に達しました。明日またお試しください。")
-                else:
-                    st.error(f"エラーが発生しました: {e}")
+                st.error(f"エラーが発生しました: {e}\n\n※このエラーが続く場合は、APIキーのクォータ（無料枠）が終了している可能性があります。")
