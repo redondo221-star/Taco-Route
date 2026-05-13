@@ -3,8 +3,12 @@ import google.generativeai as genai
 from datetime import datetime
 import urllib.parse
 import re
+from streamlit_mic_recorder import speech_to_text
 
-# --- 1. API・モデル設定 ---
+# --- 1. アプリ基本設定 (必ず最初に書く) ---
+st.set_page_config(page_title="Taco-Route", layout="centered", page_icon="🚗")
+
+# --- 2. API・モデル設定 ---
 if "API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["API_KEY"])
 
@@ -18,16 +22,13 @@ def get_working_model():
     except Exception:
         return genai.GenerativeModel('gemini-1.5-flash')
 
-# スマホで見やすくするため、標準レイアウトに設定
-st.set_page_config(page_title="Taco-Route", layout="centered", page_icon="🚗")
-
-# --- 2. セッション状態の初期化 ---
+# --- 3. セッション状態の初期化 ---
 if "now" not in st.session_state:
     st.session_state.now = datetime.now()
 if "route_chat" not in st.session_state:
-    st.session_state.route_chat = []  # チャット履歴用
+    st.session_state.route_chat = []
 
-# --- 3. メインUI構成 ---
+# --- 4. メインUI構成 ---
 st.title("🚗 Taco-Route")
 st.markdown("### 最速基準・コスト削減分析モデル")
 
@@ -47,8 +48,8 @@ with col_vh:
 
 with col_dt:
     st.write("🕒 出発日時")
-    input_date = st.date_input("日付", value=st.session_state.now.date(), key="d_input", label_visibility="collapsed")
-    input_time = st.time_input("時刻", value=st.session_state.now.time(), key="t_input", label_visibility="collapsed")
+    input_date = st.date_input("日付", value=st.session_state.now.date(), key="d_input")
+    input_time = st.time_input("時刻", value=st.session_state.now.time(), key="t_input")
 
 departure_dt = datetime.combine(input_date, input_time)
 weeks = ["月", "火", "水", "木", "金", "土", "日"]
@@ -57,60 +58,42 @@ full_dt_str = f"{departure_dt.strftime('%Y年%m月%d日')}({day_of_week}) {input
 
 st.markdown("---")
 
-# --- 4. 実行ボタン ---
+# --- 5. 実行ボタン（最初の提案） ---
 if st.button("🚀 この条件でルートを提案してもらう", use_container_width=True):
     if not start_point or not destination:
         st.warning("出発地点と目的地を入力してください。")
     else:
-        st.session_state.route_chat = [] # 履歴をリセット
+        st.session_state.route_chat = [] # 履歴リセット
         via_points = f"「{v1}」" if v1 else ""
         if v2: via_points += f" および 「{v2}」"
 
         prompt = f"""
-        あなたは日本の道路事情に精通したプロドライバーです。
-        以下の条件で3つのルート（案①最速、案②爆速コスパ、案③トータル最適）を提案してください。
-
-        【条件】
-        - 経由地 {via_points} は必ず通過すること。
-        - 出発日時：{full_dt_str}。
-        - 表記：高速道路名は :red[== 道路名 (〇〇IC〜××IC) ==]、一般道は :blue[-- 道路名 --]。
-        - 各案に「所要時間」「高速料金」を含めること。
-        - 最後に Markdown形式で比較表を作成すること。
-
-        【地図用データ】
-        回答の末尾に必ず以下を含めてください。
-        DATA_START
-        ROUTE1:{start_point},[中継点],{destination}
-        ROUTE2:{start_point},[中継点],{destination}
-        ROUTE3:{start_point},[中継点],{destination}
-        DATA_END
-
-        出発：{start_point} / 到着：{destination} / 車種：{vehicle}
+        プロドライバーとして3つのルートを提案して。
+        経由地：{via_points}、出発日時：{full_dt_str}、車種：{vehicle}
+        回答の末尾に必ず DATA_START ... DATA_END 形式で地図用データを含めること。
+        出発：{start_point} / 到着：{destination}
         """
 
-        with st.spinner("最適ルートを解析中..."):
+        with st.spinner("解析中..."):
             try:
                 model = get_working_model()
                 res = model.generate_content(prompt)
                 st.session_state.route_chat.append({"role": "assistant", "content": res.text})
             except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+                st.error(f"エラー: {e}")
 
-# --- 5. チャット・履歴表示 ---
+# --- 6. チャット履歴と地図の表示 ---
 for message in st.session_state.route_chat:
-    # 地図データ部分は非表示にしてメッセージを表示
     clean_content = message["content"].split("DATA_START")[0]
     with st.chat_message(message["role"]):
         st.markdown(clean_content)
 
-# 最新の回答から地図ボタンを生成
 if st.session_state.route_chat:
     last_res = st.session_state.route_chat[-1]["content"]
     if "DATA_START" in last_res:
         st.markdown("### 📍 地図を確認")
         data_part = last_res.split("DATA_START")[1].split("DATA_END")[0]
         btn_labels = ["①最速", "②爆速コスパ", "③トータル最適"]
-        
         for i, label in enumerate(btn_labels):
             match = re.search(f"ROUTE{i+1}:(.*)", data_part)
             if match:
@@ -119,16 +102,27 @@ if st.session_state.route_chat:
                 gmap_url = f"https://www.google.com/maps/dir/{encoded_path}"
                 st.link_button(f"🗺️ {label}の地図を表示", gmap_url, use_container_width=True)
 
-    # 追加質問の入力欄
-    if query := st.chat_input("例：案②をもっと詳しく / 途中で寄れる温泉を教えて"):
+    # --- 7. 対話機能（音声入力 ＆ キーボード） ---
+    st.markdown("---")
+    st.subheader("💬 AIと対話・追加指示")
+    
+    # 音声入力
+    audio_text = speech_to_text(start_prompt="🎤 声で指示を出す", language='ja', key='speech')
+    # キーボード入力
+    query = st.chat_input("さらに質問...")
+
+    # 音声があれば上書き
+    if audio_text:
+        query = audio_text
+
+    if query:
+        st.session_state.route_chat.append({"role": "user", "content": query})
         with st.chat_message("user"):
             st.markdown(query)
-        st.session_state.route_chat.append({"role": "user", "content": query})
         
-        with st.spinner("AIが回答を考えています..."):
+        with st.spinner("AIが回答中..."):
             model = get_working_model()
-            # 過去のやり取りを含めて質問
             history_text = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.route_chat[-3:]])
-            response = model.generate_content(f"これまでのルート提案を踏まえて答えてください:\n{history_text}\nユーザー: {query}")
+            response = model.generate_content(f"履歴を踏まえて回答して:\n{history_text}\n質問: {query}")
             st.session_state.route_chat.append({"role": "assistant", "content": response.text})
             st.rerun()
