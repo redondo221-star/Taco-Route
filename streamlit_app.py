@@ -26,7 +26,7 @@ def get_working_model():
 if "now" not in st.session_state:
     st.session_state.now = datetime.now()
 if "route_chat" not in st.session_state:
-    st.session_state.route_chat = [] # 対話履歴用
+    st.session_state.route_chat = [] # 对话履歴用
 
 # --- 4. メインUI構成 ---
 st.title("🚗 Taco-Route")
@@ -42,6 +42,17 @@ with col_v1:
     v1 = st.text_input("必須経由地", placeholder="例：佐野SA")
 with col_v2:
     v2 = st.text_input("任意経由地", placeholder="")
+
+# ★【変更点】Yahoo!ナビのルート情報入力欄を追加（他の内容は一切変更していません）
+st.markdown("---")
+st.markdown("### 🗺️ Yahoo!ナビのルートを参考にする（任意）")
+st.caption("Yahoo!ナビ等で事前に調べたルートや料金があれば、ここにメモ書き程度に入力してください。AIがそれを取り込んで比較・分析します。")
+yahoo_route_info = st.text_area(
+    "Yahoo!ナビの情報（コピペやメモなど）", 
+    placeholder="例：新東名まわりで5時間30分、高速料金12,000円だった、など",
+    height=100
+)
+st.markdown("---")
 
 col_vh, col_dt = st.columns([1, 1])
 with col_vh:
@@ -68,9 +79,15 @@ if st.button("🚀 この条件でルートを提案してもらう", use_contai
         via_points = f"「{v1}」" if v1 else ""
         if v2: via_points += f" および 「{v2}」"
 
+        # Yahoo!ナビの情報がある場合のAI用プロンプト調整
+        yahoo_context = ""
+        if yahoo_route_info:
+            yahoo_context = f"\n【ユーザーからの重要参考情報（Yahoo!ナビ等）】\n{yahoo_route_info}\n※このルートを「案④（Yahoo!ナビ参考案）」として比較表や解説に必ず組み込み、他の案と比較してどう優れているか・劣っているか（コスパ・タイパの観点）をプロの視点で分析してください。"
+
         prompt = f"""
         あなたは日本の道路事情（バイパス、高速、ETC割引）に精通したプロドライバーです。
-        以下の条件で3つのルート（案①最速、案②爆速コスパ、案③トータル最適）を提案してください。
+        以下の条件でルートを提案・分析してください。
+        {yahoo_context}
 
         【絶対命令：条件】
         - 経由地 {via_points} は必ず通過すること。
@@ -80,7 +97,7 @@ if st.button("🚀 この条件でルートを提案してもらう", use_contai
         - 各案の解説には必ず「所要時間」と「高速料金」を含めること。
 
         【重要：比較表の作成】
-        各案の詳細解説のあと、必ず Markdown形式で比較表を作成してください。
+        各案の詳細解説のあと、必ず Markdown形式で比較表を作成してください。Yahoo!ナビ参考案がある場合はそれも列に含めてください。
         項目：案名 | 距離(km) | 所要時間 | 高速料金(円) | 距離差 | 時間差(分) | 料金差(円) | 1時間あたりの削減額
 
         【地図表示用データ】
